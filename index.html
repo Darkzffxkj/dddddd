@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Esqueleto Vermelho Preto Branco</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero-card">
+      <div class="hero-copy">
+        <p class="eyebrow">ESQUELETO</p>
+        <h1>DarkFnc</h1>
+        <p class="subtitle">Um layout base em vermelho, preto e branco com seções claras para crescer.</p>
+      </div>
+
+      <div class="hero-badge" aria-label="marca">
+        <span class="badge-dot"></span>
+        <span class="badge-text">RBW</span>
+      </div>
+    </header>
+
+    <main class="content-grid">
+      <section class="panel panel-primary">
+        <div class="panel-header">
+          <p class="eyebrow">Sobre</p>
+          <h2>Quem sou</h2>
+        </div>
+        <p>Área principal para introdução, bio ou resumo do projeto.</p>
+      </section>
+
+      <section class="panel panel-dark">
+        <div class="panel-header">
+          <p class="eyebrow">Destaque</p>
+          <h2>Seção ativa</h2>
+        </div>
+        <p>Bloco escuro para destacar informações, estatísticas ou conteúdo importante.</p>
+      </section>
+
+      <section class="panel panel-light">
+        <div class="panel-header">
+          <p class="eyebrow">Links</p>
+          <h2>Meus links</h2>
+        </div>
+        <div class="button-stack">
+          <button class="site-button" data-link="https://discord.gg/dSane5s7kC" onclick="abrirLink(event)">Discord</button>
+          <button class="site-button" data-link="https://www.riqueza.life/@dark" onclick="abrirLink(event)">Riqueza.life</button>
+          <button class="site-button" data-link="https://github.com/" onclick="abrirLink(event)">GitHub</button>
+        </div>
+      </section>
+
+      <section class="panel panel-secondary">
+        <div class="panel-header">
+          <p class="eyebrow">Estrutura</p>
+          <h2>Conteúdo extra</h2>
+        </div>
+        <p>Use este espaço para serviços, produtos, projetos ou qualquer bloco de conteúdo.</p>
+      </section>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
