@@ -259,10 +259,10 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                 }.show()
         }
         settingsRow(content, "Mapeamentos", "Perfis e configurações de teclas") {
-            info("Mapeamentos", "O editor de teclas e o motor de toques serão implementados em uma próxima etapa.")
+            info("Editor HUD", "Abra um jogo pela aba Jogar, toque no botão flutuante e escolha Editar HUD. Toques por teclado externo podem funcionar com Acessibilidade habilitada.")
         }
         settingsRow(content, "Cursor do mouse", "Personalização do cursor") {
-            info("Cursor do mouse", "O cursor personalizado requer a futura camada flutuante. A permissão pode ser concedida na tela de jogo.")
+            info("Cursor do mouse", "Abra o menu flutuante dentro do jogo e toque em Configurações. O perfil visual é salvo por jogo; o cursor físico ainda não é substituído.")
         }
         settingsRow(content, "Terminal ADB", "Informações de ativação") { showTab(1) }
         settingsRow(content, "Apps em execução", "Gerenciamento de aplicativos") {
@@ -568,7 +568,18 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
             toast("Não foi possível localizar o jogo")
             return
         }
-        // A interface abre o jogo original; o motor de mapeamento ainda não está integrado.
+        val mapping = HudAccessibilityService.current
+        if (mapping == null) {
+            AlertDialog.Builder(this)
+                .setTitle("Ativar editor e mapeamento")
+                .setMessage("Para mostrar o botão flutuante e executar os toques configurados, ative o serviço de acessibilidade Referência. Isso não modifica nem clona o jogo.")
+                .setNegativeButton("Abrir sem HUD") { _, _ -> try { startActivity(launch) } catch (_: Exception) { toast("Falha ao abrir o jogo") } }
+                .setPositiveButton("Configurar acessibilidade") { _, _ ->
+                    openSystemScreen(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }.show()
+            return
+        }
+        mapping.prepareGame(app.packageName)
         try { startActivity(launch) }
         catch (_: Exception) { toast("Falha ao abrir o jogo") }
     }
@@ -581,7 +592,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         activationChip.setTextColor(if (authorized) Palette.success else Palette.warning)
         playGate.visibility = if (authorized) View.GONE else View.VISIBLE
         activationInfo.text = when (state) {
-            ShizukuActivation.State.AUTHORIZED -> "Shizuku autorizado. O mapeamento de entradas será integrado em uma próxima versão."
+            ShizukuActivation.State.AUTHORIZED -> "Shizuku autorizado. Para usar o botão flutuante, ative também Referência em Acessibilidade."
             ShizukuActivation.State.NOT_RUNNING -> "Shizuku não está em execução. Inicie-o por USB/ADB ou, no Android 11+, pela depuração Wi-Fi."
             ShizukuActivation.State.PERMISSION_REQUIRED -> "Shizuku está ativo. Toque em Autorizar para conceder acesso ao Referência."
             ShizukuActivation.State.DENIED -> "Permissão negada. Revise a autorização do aplicativo no Shizuku."
@@ -650,7 +661,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                     1 -> showTab(1)
                     2 -> showTab(2)
                     3 -> refreshGames()
-                    else -> info("Referência 0.4", "Interface roxa, pareamento, aplicativos e otimização seletiva Android 10+.")
+                    else -> info("Referência V7", "Interface roxa, botão flutuante, editor HUD e perfis de toque por jogo. Analógico contínuo e mouse-look ainda em desenvolvimento.")
                 }
             }.show()
     }

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_description">Reconhece teclas para controles configurados e exibe o editor flutuante somente enquanto um jogo selecionado estiver aberto. Pode gerar toques de tela. Não grava conteúdos de chats.</string>
+</resources>

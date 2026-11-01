@@ -33,6 +33,19 @@
             </intent-filter>
         </activity>
         <service
+            android:name=".HudAccessibilityService"
+            android:label="Referência — Controles dos jogos"
+            android:description="@string/accessibility_description"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/referencia_accessibility" />
+        </service>
+        <service
             android:name=".PairingService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
