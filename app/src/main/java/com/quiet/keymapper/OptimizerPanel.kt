@@ -2,6 +2,7 @@ package com.quiet.keymapper
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.ActivityManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
@@ -15,6 +16,8 @@ import android.provider.Settings
 import android.telecom.TelecomManager
 import android.provider.Telephony
 import android.view.View
+import android.widget.Switch
+import java.util.Locale
 import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -35,6 +38,24 @@ class OptimizerPanel(private val activity: Activity, private val openActivation:
     private var closed = false
     private var busy = false
     private var bound = false
+    private val prefs = activity.getSharedPreferences("referencia_optimizer", Context.MODE_PRIVATE)
+    private val exceptions = prefs.getStringSet("exceptions", emptySet())?.toMutableSet() ?: mutableSetOf()
+    private val customPackages = prefs.getStringSet("custom", emptySet())?.toMutableSet() ?: mutableSetOf()
+    private var showUser = true
+    private var showSystem = false
+    private var customOnly = false
+    private var processesKnown = false
+    private var closedSession = 0
+    private data class RunState(val app: InstalledApp, val active: Boolean, val system: Boolean)
+    private var cached = emptyList<RunState>()
+    private val ramGauge = RamGauge(activity)
+    private val ramText = activity.txt("Verificando memória...", 12f, Palette.muted)
+    private val launchedCount = activity.txt("—", 20f, Palette.violetSoft, true)
+    private val closedCount = activity.txt("0", 20f, Palette.violetSoft, true)
+    private val freeRam = activity.txt("—", 20f, Palette.violetSoft, true)
+    private lateinit var exceptionsHolder: LinearLayout
+    private lateinit var allSegment: TextView
+    private lateinit var customSegment: TextView
     @Volatile private var remote: IOptimizerService? = null
     private val args = Shizuku.UserServiceArgs(
         ComponentName(activity.packageName, OptimizerUserService::class.java.name)
@@ -59,15 +80,86 @@ class OptimizerPanel(private val activity: Activity, private val openActivation:
         view.addView(content)
         content.addView(activity.txt("Otimizar", 21f, Palette.white, true))
         content.addView(activity.txt(
-            "Apps nos Recentes podem estar encerrados. O estado de execução é consultado pelo Shizuku.",
+            "RAM, processos ativos e hibernação de aplicativos — status consultado pelo Shizuku.",
             12f, Palette.muted
-        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(8); bottomMargin = activity.dp(12) })
+        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(7); bottomMargin = activity.dp(12) })
+
+        // Header metrics patterned after the reference, in the established purple theme.
+        val memoryCard = activity.row().apply {
+            background = rounded(Palette.panel, activity.dp(14).toFloat())
+            setPadding(activity.dp(8), activity.dp(12), activity.dp(12), activity.dp(12))
+        }
+        memoryCard.addView(ramGauge, LinearLayout.LayoutParams(activity.dp(154), activity.dp(154)))
+        val stats = activity.column().apply { setPadding(activity.dp(9), 0, 0, 0) }
+        stats.addView(launchedCount)
+        stats.addView(activity.txt("Apps lançados", 11f, Palette.muted))
+        stats.addView(closedCount, LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(12) })
+        stats.addView(activity.txt("Fechados nesta sessão", 11f, Palette.muted))
+        stats.addView(freeRam, LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(12) })
+        stats.addView(activity.txt("Memória disponível", 11f, Palette.muted))
+        memoryCard.addView(stats, LinearLayout.LayoutParams(0, -2, 1f))
+        content.addView(memoryCard)
+        content.addView(ramText, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = activity.dp(5); bottomMargin = activity.dp(12)
+        })
+
+        val toggles = activity.column().apply {
+            background = rounded(Palette.panel, activity.dp(12).toFloat())
+            setPadding(activity.dp(13), activity.dp(10), activity.dp(13), activity.dp(10))
+        }
+        fun addToggle(label: String, on: Boolean, changed: (Boolean) -> Unit) {
+            val line = activity.row()
+            line.addView(activity.txt(label, 14f, Palette.white, true), LinearLayout.LayoutParams(0, -2, 1f))
+            val toggle = Switch(activity).apply {
+                isChecked = on
+                thumbTintList = android.content.res.ColorStateList.valueOf(Palette.primary)
+                setOnCheckedChangeListener { _, checked -> changed(checked) }
+            }
+            line.addView(toggle)
+            toggles.addView(line)
+        }
+        addToggle("Apps do usuário", true) { showUser = it; redrawApps() }
+        addToggle("Apps do sistema (somente leitura)", false) { showSystem = it; redrawApps() }
+        content.addView(toggles, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(11) })
+
+        val segments = activity.row().apply {
+            background = rounded(Palette.panel, activity.dp(12).toFloat())
+            setPadding(activity.dp(4), activity.dp(4), activity.dp(4), activity.dp(4))
+        }
+        allSegment = activity.action("Todos os aplicativos", true) {
+            customOnly = false; refreshSegment(); redrawApps()
+        }
+        customSegment = activity.action("Lista personalizada", false) {
+            customOnly = true; refreshSegment(); redrawApps()
+        }
+        segments.addView(allSegment, LinearLayout.LayoutParams(0, -2, 1f))
+        segments.addView(customSegment, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = activity.dp(5) })
+        content.addView(segments, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(11) })
+        content.addView(activity.action("Editar lista personalizada", false) { pickCustomApps() },
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(11) })
+
+        val exceptionsCard = activity.column().apply {
+            background = rounded(Palette.panel, activity.dp(13).toFloat())
+            setPadding(activity.dp(12), activity.dp(12), activity.dp(12), activity.dp(13))
+        }
+        val exceptionsTop = activity.row()
+        exceptionsTop.addView(activity.txt("LISTA DE EXCEÇÕES", 16f, Palette.violetSoft, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        exceptionsTop.addView(activity.action("+", false) { addException() })
+        exceptionsCard.addView(exceptionsTop)
+        exceptionsHolder = activity.column()
+        exceptionsCard.addView(exceptionsHolder, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = activity.dp(10)
+        })
+        content.addView(exceptionsCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(12) })
+        drawExceptions()
+        updateMemory()
 
         val card = activity.column().apply {
             background = rounded(Palette.panel, activity.dp(14).toFloat())
             setPadding(activity.dp(13), activity.dp(13), activity.dp(13), activity.dp(14))
         }
-        card.addView(activity.txt("Hibernator — aplicativos em execução", 16f, Palette.white, true))
+        card.addView(activity.txt("APPS LANÇADOS", 16f, Palette.violetSoft, true))
         card.addView(caption, LinearLayout.LayoutParams(-1, -2).apply {
             topMargin = activity.dp(7); bottomMargin = activity.dp(11)
         })
@@ -113,6 +205,115 @@ class OptimizerPanel(private val activity: Activity, private val openActivation:
         ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(12) })
     }
 
+
+    private fun refreshSegment() {
+        allSegment.background = rounded(if (customOnly) Palette.panelAlt else Palette.primary, activity.dp(10).toFloat())
+        customSegment.background = rounded(if (customOnly) Palette.primary else Palette.panelAlt, activity.dp(10).toFloat())
+        allSegment.setTextColor(if (customOnly) Palette.violetSoft else Palette.white)
+        customSegment.setTextColor(if (customOnly) Palette.white else Palette.violetSoft)
+    }
+
+    private fun updateMemory() {
+        try {
+            val mem = ActivityManager.MemoryInfo()
+            (activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(mem)
+            if (mem.totalMem <= 0) return
+            val used = (100.0 * (mem.totalMem - mem.availMem) / mem.totalMem).toInt().coerceIn(0, 100)
+            ramGauge.usedPercent = used
+            val free = mem.availMem.toDouble() / 1_073_741_824.0
+            val total = mem.totalMem.toDouble() / 1_073_741_824.0
+            val usedGb = total - free
+            ramText.text = String.format(Locale.getDefault(),
+                "%.2f GB / %.2f GB em uso", usedGb, total)
+            freeRam.text = String.format(Locale.getDefault(), "%.2f GB", free)
+            closedCount.text = closedSession.toString()
+        } catch (_: Exception) { ramText.text = "RAM indisponível" }
+    }
+
+    private fun redrawApps() {
+        if (!::exceptionsHolder.isInitialized) return
+        rows.clear()
+        appArea.removeAllViews()
+        val visible = cached.filter { state ->
+            state.active &&
+                (if (state.system) showSystem else showUser) &&
+                state.app.packageName !in exceptions &&
+                (!customOnly || state.app.packageName in customPackages)
+        }
+        launchedCount.text = if (processesKnown) cached.count { it.active }.toString() else "—"
+        if (!processesKnown || visible.isEmpty()) {
+            appArea.addView(activity.txt(
+                if (!processesKnown) "Sem dados. Verifique o Shizuku."
+                else "Nenhum aplicativo ativo corresponde aos filtros.",
+                12f, Palette.muted
+            ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(10) })
+        }
+        visible.sortedWith(compareBy<RunState> { it.system }.thenBy { it.app.label.lowercase() })
+            .forEach { entry -> addAppRow(entry.app, entry.active, processesKnown, entry.system) }
+        caption.text = if (!processesKnown) "Consulta indisponível. Verifique a ativação Shizuku."
+            else "${visible.size} exibidos • ${cached.count { it.active }} processos de apps detectados"
+    }
+
+    private fun drawExceptions() {
+        if (!::exceptionsHolder.isInitialized) return
+        exceptionsHolder.removeAllViews()
+        if (exceptions.isEmpty()) {
+            exceptionsHolder.addView(activity.txt("Nenhuma exceção adicionada.", 12f, Palette.muted))
+            return
+        }
+        val pm = activity.packageManager
+        exceptions.sorted().forEach { pkg ->
+            val label = try {
+                @Suppress("DEPRECATION")
+                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+            } catch (_: Exception) { pkg }
+            val line = activity.row().apply { setPadding(0, activity.dp(5), 0, activity.dp(5)) }
+            line.addView(activity.txt(label, 12f, Palette.white), LinearLayout.LayoutParams(0, -2, 1f))
+            line.addView(activity.action("Remover", false) {
+                exceptions.remove(pkg); saveLists(); drawExceptions(); redrawApps()
+            })
+            exceptionsHolder.addView(line)
+        }
+    }
+
+    private fun addException() {
+        val available = cached.map { it.app }.distinctBy { it.packageName }
+            .filter { it.packageName !in exceptions }.sortedBy { it.label.lowercase() }
+        if (available.isEmpty()) {
+            toast("Atualize a lista para escolher exceções")
+            return
+        }
+        AlertDialog.Builder(activity).setTitle("Adicionar à lista de exceções")
+            .setItems(available.map { it.label }.toTypedArray()) { _, index ->
+                exceptions.add(available[index].packageName)
+                saveLists(); drawExceptions(); redrawApps()
+            }.setNegativeButton("Cancelar", null).show()
+    }
+
+    private fun pickCustomApps() {
+        val available = cached.map { it.app }.distinctBy { it.packageName }
+            .filter { it.packageName !in protectedPackages() }.sortedBy { it.label.lowercase() }
+        if (available.isEmpty()) { toast("Atualize os aplicativos"); return }
+        val choices = BooleanArray(available.size) { i ->
+            available[i].packageName in customPackages
+        }
+        AlertDialog.Builder(activity).setTitle("Lista personalizada")
+            .setMultiChoiceItems(available.map { it.label }.toTypedArray(), choices) { _, i, checked ->
+                choices[i] = checked
+            }
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Salvar") { _, _ ->
+                customPackages.clear()
+                available.forEachIndexed { i, app -> if (choices[i]) customPackages.add(app.packageName) }
+                saveLists(); customOnly = true; refreshSegment(); redrawApps()
+            }.show()
+    }
+
+    private fun saveLists() {
+        prefs.edit().putStringSet("exceptions", exceptions.toSet())
+            .putStringSet("custom", customPackages.toSet()).apply()
+    }
+
     fun onTabShown() { bindIfNeeded(); refresh() }
 
     private fun bindIfNeeded() {
@@ -131,6 +332,7 @@ class OptimizerPanel(private val activity: Activity, private val openActivation:
     fun refresh() {
         if (closed || busy) return
         bindIfNeeded()
+        updateMemory()
         val service = remote
         caption.text = if (service == null) "Conectando ao Shizuku..." else "Lendo processos em execução..."
         executor.execute {
@@ -138,17 +340,22 @@ class OptimizerPanel(private val activity: Activity, private val openActivation:
             val processes: Set<String>? = try { service?.listRunningProcesses()?.toSet() }
                 catch (_: Exception) { null }
             val good = processes != null && "!ERROR_PS" !in processes
+            val pm = activity.packageManager
             val list = candidates.map { app ->
-                app to (good && processes!!.any { it == app.packageName || it.startsWith(app.packageName + ":") })
-            }.sortedWith(compareByDescending<Pair<InstalledApp, Boolean>> { it.second }.thenBy { it.first.label.lowercase() })
+                val active = good && processes!!.any { it == app.packageName || it.startsWith(app.packageName + ":") }
+                val isSystem = try {
+                    @Suppress("DEPRECATION")
+                    val flags = pm.getApplicationInfo(app.packageName, 0).flags
+                    flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+                } catch (_: Exception) { true }
+                RunState(app, active, isSystem)
+            }
             activity.runOnUiThread {
                 if (closed) return@runOnUiThread
-                rows.clear()
-                appArea.removeAllViews()
-                val running = list.count { it.second }
-                caption.text = if (good) "${running} em execução • ${list.size} apps de usuário"
-                    else "Consulta indisponível. Autorize o Shizuku e toque em Atualizar."
-                list.forEach { (app, active) -> addAppRow(app, active, good) }
+                processesKnown = good
+                cached = list
+                updateMemory()
+                redrawApps()
             }
         }
     }
@@ -159,8 +366,7 @@ class OptimizerPanel(private val activity: Activity, private val openActivation:
         @Suppress("DEPRECATION")
         val installed = pm.getInstalledApplications(0)
         return installed.asSequence().filter { a ->
-            a.enabled && a.packageName !in ignored &&
-                a.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+            a.enabled && a.packageName !in ignored
         }.map { a ->
             val label = try { pm.getApplicationLabel(a).toString() } catch (_: Exception) { a.packageName }
             @Suppress("DEPRECATION")
@@ -194,7 +400,7 @@ class OptimizerPanel(private val activity: Activity, private val openActivation:
         return set
     }
 
-    private fun addAppRow(app: InstalledApp, active: Boolean, good: Boolean) {
+    private fun addAppRow(app: InstalledApp, active: Boolean, good: Boolean, system: Boolean) {
         val row = activity.row().apply { setPadding(0, activity.dp(8), 0, activity.dp(8)) }
         val icon = ImageView(activity).apply {
             setImageDrawable(try { activity.packageManager.getApplicationIcon(app.packageName) }
@@ -207,13 +413,14 @@ class OptimizerPanel(private val activity: Activity, private val openActivation:
         labels.addView(activity.txt(app.label, 13f, Palette.white, true))
         labels.addView(activity.txt(when {
             !good -> "Estado desconhecido"
+            system -> "Sistema • protegido"
             active -> "● Em execução"
             else -> "Parado"
         }, 11f, if (active && good) Palette.success else Palette.muted))
         row.addView(labels, LinearLayout.LayoutParams(0, -2, 1f))
         val box = CheckBox(activity).apply {
             buttonTintList = android.content.res.ColorStateList.valueOf(Palette.violetSoft)
-            isEnabled = active && good
+            isEnabled = active && good && !system
         }
         row.addView(box)
         row.setOnClickListener { if (box.isEnabled) box.isChecked = !box.isChecked }
@@ -286,6 +493,8 @@ class OptimizerPanel(private val activity: Activity, private val openActivation:
                 busy = false
                 stopButton.isEnabled = true
                 val success = result.count { it.second == 0 }
+                if (!enable) closedSession += success
+                updateMemory()
                 if (success < result.size)
                     AlertDialog.Builder(activity).setTitle("Algumas operações falharam")
                         .setMessage(result.filter { it.second != 0 }.joinToString("\n") {

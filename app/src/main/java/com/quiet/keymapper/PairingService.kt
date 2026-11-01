@@ -132,7 +132,7 @@ class PairingService : Service() {
         pairing = true
         publish("Pareando via ADB", "Validando o código com o Android…", false)
         worker.execute {
-            val result = runCatching { runBlocking { Kadb.pair(host, port, code, "KeyMapper Pro") } }
+            val result = runCatching { runBlocking { Kadb.pair(host, port, code, "Referência") } }
             handler.post {
                 pairing = false
                 if (result.isSuccess) {

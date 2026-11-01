@@ -11,7 +11,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <!-- Launcher-visible apps only: avoids QUERY_ALL_PACKAGES. -->
+    <!-- Visibility for launchable games and Shizuku integration. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -21,7 +21,7 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="KeyMapper Pro"
+        android:label="Referência"
         android:icon="@drawable/ic_launcher"
         android:theme="@style/AppTheme"
         android:supportsRtl="true"

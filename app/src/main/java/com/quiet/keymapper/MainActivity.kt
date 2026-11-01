@@ -9,9 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.hardware.input.InputManager
-import android.media.AudioDeviceCallback
-import android.media.AudioDeviceInfo
-import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -47,7 +44,6 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private lateinit var devices: DeviceRepository
     private lateinit var games: GameRepository
     private lateinit var inputManager: InputManager
-    private lateinit var audioManager: AudioManager
     private lateinit var deviceStrip: LinearLayout
     private lateinit var devicesSummary: TextView
     private lateinit var activationChip: TextView
@@ -72,10 +68,6 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private val onShizukuPermission = Shizuku.OnRequestPermissionResultListener { code, _ ->
         if (code == SHIZUKU_PERMISSION_CODE) runOnUiThread { updateActivation() }
     }
-    private val audioCallback = object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = scheduleDeviceRefresh()
-        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = scheduleDeviceRefresh()
-    }
     private val deviceRefresh = Runnable { if (!disposed) renderDevices() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,7 +75,6 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         devices = DeviceRepository(this)
         games = GameRepository(this)
         inputManager = getSystemService(Context.INPUT_SERVICE) as InputManager
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         buildUi()
         Shizuku.addBinderReceivedListenerSticky(onShizukuArrived)
         Shizuku.addBinderDeadListener(onShizukuDead)
@@ -95,7 +86,6 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     override fun onStart() {
         super.onStart()
         inputManager.registerInputDeviceListener(this, handler)
-        audioManager.registerAudioDeviceCallback(audioCallback, handler)
         scheduleDeviceRefresh()
     }
 
@@ -107,7 +97,6 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
     override fun onStop() {
         inputManager.unregisterInputDeviceListener(this)
-        audioManager.unregisterAudioDeviceCallback(audioCallback)
         handler.removeCallbacks(deviceRefresh)
         super.onStop()
     }
@@ -144,7 +133,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         }
         val top = row()
         val title = column().apply {
-            addView(txt("✦  KeyMapper Pro", 20f, Palette.white, true))
+            addView(txt("✦  Referência", 20f, Palette.white, true))
             addView(txt("MAPEADOR ANDROID 10+", 10f, 0xFFE3C9FF.toInt(), true),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         }
@@ -158,7 +147,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
             setPadding(dp(12), dp(10), dp(12), dp(11))
         }
         val deviceRow = row()
-        deviceRow.addView(txt("◈  Periféricos conectados", 13f, Palette.white, true),
+        deviceRow.addView(txt("◈  Mouse e teclado conectados", 13f, Palette.white, true),
             LinearLayout.LayoutParams(0, -2, 1f))
         devicesSummary = txt("Procurando...", 11f, Palette.violetSoft, true)
         deviceRow.addView(devicesSummary)
@@ -261,11 +250,11 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
             LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         settingsRow(content, "Configurações do app", "Aparência, entrada e compatibilidade") {
             AlertDialog.Builder(this).setTitle("Configurações do app")
-                .setItems(arrayOf("Atualizar lista de jogos", "Ver dispositivos conectados", "Sobre o KeyMapper")) { _, i ->
+                .setItems(arrayOf("Atualizar lista de jogos", "Ver dispositivos conectados", "Sobre o Referência")) { _, i ->
                     when (i) {
                         0 -> refreshGames()
                         1 -> renderDevices()
-                        else -> info("KeyMapper Pro V2", "Android 10+. Interface e ativação, sem motor de mapeamento nesta etapa.")
+                        else -> info("Referência V6", "Android 10+. Mapeamento de teclado e mouse ainda está em desenvolvimento.")
                     }
                 }.show()
         }
@@ -277,7 +266,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         }
         settingsRow(content, "Terminal ADB", "Informações de ativação") { showTab(1) }
         settingsRow(content, "Apps em execução", "Gerenciamento de aplicativos") {
-            info("Apps em execução", "Esta versão não encerra outros aplicativos. A função depende de permissões e integração adicionais.")
+            showTab(2)
         }
     }
 
@@ -319,7 +308,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
             LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         if (Build.VERSION.SDK_INT >= 30) {
             content.addView(activationCard("Depuração Wi-Fi + Shizuku",
-                "Android 11+. Inicie o Shizuku após parear pela depuração sem fio e autorize o KeyMapper.",
+                "Android 11+. Inicie o Shizuku após parear pela depuração sem fio e autorize o Referência.",
                 listOf("Buscar pareamento Wi-Fi" to { startPairingScan() },
                     "Opções de desenvolvedor" to { openDeveloperOptions() },
                     "Abrir Shizuku" to { openShizuku() })), cardParams())
@@ -355,7 +344,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         val found = try { devices.snapshot() } catch (_: Exception) { emptyList() }
         devicesSummary.text = if (found.isEmpty()) "Nenhum detectado" else "${found.size} dispositivo(s)"
         if (found.isEmpty()) {
-            deviceStrip.addView(txt("Nenhum periférico externo conectado", 12f, Palette.muted))
+            deviceStrip.addView(txt("Nenhum mouse ou teclado externo conectado", 12f, Palette.muted))
             return
         }
         found.forEach { device ->
@@ -451,7 +440,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
         var skippedOverlay = false
         var skippedBattery = false
-        val overlayRow = permissionRow(root, "Widgets flutuantes", "Exibir KeyMapper sobre o jogo", "Permitir", "Pular",
+        val overlayRow = permissionRow(root, "Widgets flutuantes", "Exibir Referência sobre o jogo", "Permitir", "Pular",
             { openOverlaySettings() }, { skippedOverlay = true; permissionsRefresh?.invoke() })
         val batteryRow = permissionRow(root, "Desativar a otimização da bateria", "Ajuda a manter o serviço em execução", "Permitir", "Pular",
             { openBatterySettings() }, { skippedBattery = true; permissionsRefresh?.invoke() })
@@ -594,7 +583,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         activationInfo.text = when (state) {
             ShizukuActivation.State.AUTHORIZED -> "Shizuku autorizado. O mapeamento de entradas será integrado em uma próxima versão."
             ShizukuActivation.State.NOT_RUNNING -> "Shizuku não está em execução. Inicie-o por USB/ADB ou, no Android 11+, pela depuração Wi-Fi."
-            ShizukuActivation.State.PERMISSION_REQUIRED -> "Shizuku está ativo. Toque em Autorizar para conceder acesso ao KeyMapper."
+            ShizukuActivation.State.PERMISSION_REQUIRED -> "Shizuku está ativo. Toque em Autorizar para conceder acesso ao Referência."
             ShizukuActivation.State.DENIED -> "Permissão negada. Revise a autorização do aplicativo no Shizuku."
             ShizukuActivation.State.ERROR -> "Falha na comunicação com Shizuku. Confira a instalação e a versão."
         }
@@ -654,14 +643,14 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     }
 
     private fun showAppMenu() {
-        AlertDialog.Builder(this).setTitle("KeyMapper Pro")
+        AlertDialog.Builder(this).setTitle("Referência")
 .setItems(arrayOf("Jogar", "Ativação", "Otimizar", "Atualizar jogos", "Sobre")) { _, option ->
                 when (option) {
                     0 -> showTab(0)
                     1 -> showTab(1)
                     2 -> showTab(2)
                     3 -> refreshGames()
-                    else -> info("KeyMapper Pro 0.4", "Interface roxa, pareamento, aplicativos e otimização seletiva Android 10+.")
+                    else -> info("Referência 0.4", "Interface roxa, pareamento, aplicativos e otimização seletiva Android 10+.")
                 }
             }.show()
     }
