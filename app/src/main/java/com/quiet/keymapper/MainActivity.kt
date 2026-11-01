@@ -415,7 +415,14 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
             .show()
     }
 
-    private fun onGameSelected(app: InstalledApp) = showPermissionDialog(app)
+    private fun onGameSelected(app: InstalledApp) {
+        // Não mostrar o mesmo diálogo quando Shizuku e overlay já estão liberados.
+        if (activation.state() == ShizukuActivation.State.AUTHORIZED && Settings.canDrawOverlays(this)) {
+            launchSelectedGame(app)
+        } else {
+            showPermissionDialog(app)
+        }
+    }
 
     /** Required screen on each game tap. Real OS checks; no fabricated green check marks. */
     private fun showPermissionDialog(app: InstalledApp) {
