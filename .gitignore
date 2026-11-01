@@ -1,0 +1,10 @@
+# Gradle / Android Studio
+.gradle/
+.idea/
+*.iml
+local.properties
+app/build/
+build/
+# Local installs and generated APKs
+.android-tools/
+KeyMapper-Pro-V2-debug.apk
