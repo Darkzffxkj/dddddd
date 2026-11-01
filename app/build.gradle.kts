@@ -12,6 +12,14 @@ android {
         versionCode = 4
         versionName = "0.4.0"
     }
+    packaging {
+        resources {
+            excludes += "META-INF/versions/**"
+            excludes += "META-INF/*.SF"
+            excludes += "META-INF/*.RSA"
+            excludes += "META-INF/*.DSA"
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = true
