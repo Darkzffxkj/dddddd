@@ -41,6 +41,7 @@ class HudAccessibilityService : AccessibilityService() {
     private var menu: View? = null
     private var panel: View? = null
     private var bindKey: ((Int) -> Unit)? = null
+    private var consumedBindingUp = -1
     private val held = mutableSetOf<Int>()
 
     override fun onServiceConnected() {
@@ -80,9 +81,16 @@ class HudAccessibilityService : AccessibilityService() {
     }
     override fun onKeyEvent(e: KeyEvent): Boolean {
         if (game.isEmpty() || foreground != game) return false
+        // Consume both halves of a rebinding key event; never leak just KEY_UP to the game.
+        if (e.action == KeyEvent.ACTION_UP && e.keyCode == consumedBindingUp) {
+            consumedBindingUp = -1
+            return true
+        }
         if (bindKey != null && e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) {
-            bindKey?.invoke(e.keyCode)
+            consumedBindingUp = e.keyCode
+            val callback = bindKey
             bindKey = null
+            callback?.invoke(e.keyCode)
             return true
         }
         if (editing) return false
@@ -93,18 +101,18 @@ class HudAccessibilityService : AccessibilityService() {
             }
             return true
         }
-        if (typing || suspended) return false
-        val c = profile.controls.firstOrNull { it.kind == "TOUCH" && it.keyCode == e.keyCode }
-        if (c != null) {
-            if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) tap(c.x,c.y)
-            return true
-        }
         val pause = profile.controls.firstOrNull { it.kind == "SUSPEND" && it.keyCode == e.keyCode }
         if (pause != null) {
             if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) {
                 suspended = !suspended
                 toast(if (suspended) "Controles suspensos" else "Controles retomados")
             }
+            return true
+        }
+        if (typing || suspended) return false
+        val c = profile.controls.firstOrNull { it.kind == "TOUCH" && it.keyCode == e.keyCode }
+        if (c != null) {
+            if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) tap(c.x,c.y)
             return true
         }
         return false
