@@ -1,0 +1,215 @@
+cmd device_config put activity_manager net.dns1	9.9.9.10
+cmd device_config put activity_manager net.dns2	8.26.56.26
+cmd device_config put activity_manager net.eth0.dns1 9.9.9.10
+cmd device_config put activity_manager net.eth0.dns2 8.26.56.26
+cmd device_config put activity_manager net.gprs.dns1 9.9.9.10
+cmd device_config put activity_manager net.ipv4.tcp_wmem 5096,59000,287000
+cmd device_config put activity_manager net.ipv4.tcp_rmem 5096,59000,287000
+cmd device_config put activity_manager net.ipv4.tcp_mem 207000,207000,207000
+
+cmd device_config put activity_manager performance.accoustic.force true
+cmd device_config put activity_manager performance.cpu_governor_sampling_rate 50000
+cmd device_config put activity_manager performance.disturb false
+cmd device_config put activity_manager performance.mode_extreme_enabled	true
+cmd device_config put activity_manager performance.force true
+cmd device_config put activity_manager performance.phone_level high
+cmd device_config put activity_manager performance.sched_boost 1
+cmd device_config put activity_manager performance.tuning 1
+cmd device_config put activity_manager performance_schema 1
+cmd device_config put activity_manager performance_schema_digests_size 9950000
+
+cmd device_config put activity_manager ro.FOREGROUND_APP_MEM 6400
+cmd device_config put activity_manager ro.VISIBLE_APP_MEM 8960
+cmd device_config put activity_manager ro.SECONDARY_SERVER_MEM 19200
+cmd device_config put activity_manager ro.BACKUP_APP_MEM 23040
+cmd device_config put activity_manager ro.HOME_APP_MEM 3200
+cmd device_config put activity_manager ro.HIDDEN_APP_MEM 23040
+cmd device_config put activity_manager ro.EMPTY_APP_MEM 64000
+cmd device_config put activity_manager ro.PERCEPTIBLE_APP_MEM 3200
+cmd device_config put activity_manager ro.HEAVY_WEIGHT_APP_MEM 19200
+cmd device_config put activity_manager ro.CONTENT_PROVIDER_MEM 38400
+cmd device_config put activity_manager ro.FOREGROUND_APP_ADJ 25
+cmd device_config put activity_manager ro.VISIBLE_APP_ADJ 35
+cmd device_config put activity_manager ro.SECONDARY_SERVER_ADJ 75
+cmd device_config put activity_manager ro.BACKUP_APP_ADJ 76
+cmd device_config put activity_manager ro.HOME_APP_ADJ 26
+cmd device_config put activity_manager ro.EMPTY_APP_ADJ 89
+cmd device_config put activity_manager ro.HIDDEN_APP_MIN_ADJ 250
+cmd device_config put activity_manager ro.HEAVY_WEIGHT_APP_ADJ 36
+cmd device_config put activity_manager ro.CONTENT_PROVIDER_ADJ 90
+cmd device_config put activity_manager ENFORCE_PROCESS_LIMIT false
+cmd device_config put activity_manager MAX_SERVICE_INACTIVITY false
+cmd device_config put activity_manager MIN_HIDDEN_APPS false
+cmd device_config put activity_manager MAX_HIDDEN_APPS false
+cmd device_config put activity_manager CONTENT_APP_IDLE_OFFSET false
+cmd device_config put activity_manager EMPTY_APP_IDLE_OFFSET false
+cmd device_config put activity_manager MAX_ACTIVITIES false
+cmd device_config put activity_manager ACTIVITY_INACTIVE_RESET_TIME false
+cmd device_config put activity_manager MAX_RECENT_TASKS false
+cmd device_config put activity_manager MIN_RECENT_TASKS false
+cmd device_config put activity_manager APP_SWITCH_DELAY_TIME false
+cmd device_config put activity_manager MAX_PROCESSES false
+cmd device_config put activity_manager PROC_START_TIMEOUT false
+cmd device_config put activity_manager CPU_MIN_CHECK_DURATION false
+cmd device_config put activity_manager GC_TIMEOUT false
+cmd device_config put activity_manager SERVICE_TIMEOUT false
+cmd device_config put activity_manager MIN_CRASH_INTERVAL false
+
+cmd device_config put activity_manager sf.high_fps_early_app_phase_offset_ns 0
+cmd device_config put activity_manager sf.high_fps_early_gl_app_phase_offset_ns	0
+cmd device_config put activity_manager sf.high_fps_early_gl_phase_offset_ns	0
+cmd device_config put activity_manager sf.high_fps_early_phase_offset_ns 0
+cmd device_config put activity_manager sf.high_fps_late_app_phase_offset_ns	0
+
+cmd device_config put activity_manager ro.display.ninetyhz.optimizer enable
+cmd device_config put activity_manager ro.display.hz.optimizer enable
+cmd device_config put activity_manager GL_MAX_VARYING_VECTORS 31
+cmd device_config put activity_manager GL_MAX_VERTEX_ATTRIBS 32
+cmd device_config put activity_manager GL_MAX_VERTEX_OUTPUT_COMPONENTS 128
+cmd device_config put activity_manager GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS 16
+cmd device_config put activity_manager GL_MAX_VERTEX_UNIFORM_BLOCKS 14
+cmd device_config put activity_manager GL_MAX_VERTEX_UNIFORM_VECTORS 256
+cmd device_config put activity_manager GL_MAX_VERTEX_UNIFORM_COMPONENTS 1024
+cmd device_config put activity_manager GL_MAX_TEXTURE_IMAGE_UNITS 16
+cmd device_config put activity_manager CL_DEVICE_IMAGE2D_MAX_HEIGHT 16384
+cmd device_config put activity_manager CL_DEVICE_IMAGE2D_MAX_WIDTH 16384
+cmd device_config put activity_manager CL_DEVICE_IMAGE3D_MAX_DEPTH 2048
+cmd device_config put activity_manager CL_DEVICE_IMAGE3D_MAX_HEIGHT 16384
+cmd device_config put activity_manager CL_DEVICE_IMAGE3D_MAX_WIDTH 16384
+cmd device_config put activity_manager CL_DEVICE_LOCAL_MEM_SIZE 32768
+
+settings put system debug.performance.tuning 1
+settings put system debug.composition.type gpu
+settings put system persist.sys.use_16bpp_alpha 1
+settings put system debug.egl.hw 1
+settings put system debug.sf.hw 1
+settings put system ro.config.hw_fast_dormancy 1
+settings put system persist.sys.strictmode.visual 0
+settings put system persist.sys.dalvik.vm.enableassertions 0
+settings put system persist.sys.shutdown.mode hibernate
+settings put system debug.hwui.disable_vsync 1
+settings put system debug.hwui.render_dirty_regions false
+settings put system persist.sys.purgeable_assets 1
+settings put system debug.overlayui.enable 0
+settings put system debug.enabletr true
+settings put system ro.config.low_ram true
+settings put system video.accelerate.hw 1
+settings put system debug.kill_allocating_task 1
+settings put system persist.sys.nativebridge 1
+settings put system sys.cpu.restriction.enabled 0
+settings put system debug.cpu.feature_override 1
+settings put system sys.enable_cpuhotplug 1
+settings put system persist.sys.ui.hw 1
+settings put system sys.use_fifo_ui 1
+settings put system persist.service.lg.hiddenmenu.enable 0
+settings put system persist.sys.autosleep.mode off
+
+cmd device_config put activity_manager debug.hwui.target_cpu_time_percent 75
+cmd device_config put activity_manager debug.hwui.target_gpu_time_percent 75
+cmd device_config put activity_manager hwui.target_cpu_time_percent 75
+cmd device_config put activity_manager gpu.perf.tweaks.enable true
+cmd device_config put activity_manager hwui.target_gpu_time_percent 75
+cmd device_config put activity_manager persist.sys.debug.gpurend.vsync false
+cmd device_config put activity_manager persist.sys.debug.gpuprio 7
+cmd device_config put activity_manager persist.sys.debug.oculus.cpuLevel 2
+cmd device_config put activity_manager persist.sys.debug.oculus.gpuLevel 2
+
+cmd device_config put activity_manager ro_sys_fw.use_mlc 1
+cmd device_config put activity_manager ro.sys.fw.use_gentle_fair_sleepers 1
+cmd device_config put activity_manager ro_sys_fw.use_power_workqueues 1
+cmd device_config put activity_manager ro.sys.fw_use_doze_mode true
+cmd device_config put activity_manager ro_sys_fw_use_hibernation true
+cmd device_config put activity_manager ro_sys_fw_use_power_saving_animations true
+cmd device_config put activity_manager ro_sys_fw_use_smart_battery true
+cmd device_config put activity_manager ro_sys_power_mode 1
+cmd device_config put activity_manager ro.config.hw_power_saving_all true
+
+settings put secure high_priority 1
+
+cmd device_config put activity_manager high_fps_config on
+cmd device_config put activity_manager high.fps.settings on
+cmd device_config put activity_manager fpsbooster_enable 1
+cmd device_config put activity_manager enable.optimized.fps.mode 1
+cmd device_config put activity_manager enable.high.fps.constants 1
+cmd device_config put activity_manager fps.compile.filter speed
+cmd device_config put activity_manager android.fps.booster speed
+cmd device_config put activity_manager sys.config.fps.min.booster enabled
+cmd device_config put activity_manager sys.config.fps.max.booster enabled
+
+cmd device_config put activity_manager high.fps.lock.mode on
+cmd device_config put activity_manager persist.sys.NV.fps.drop 0
+cmd device_config put activity_manager persist.tegra.fps.drop 0
+cmd device_config put activity_manager persist.sys.NV.fps.lock 1
+cmd device_config put activity_manager persist.tegra.fps.lock 1
+cmd device_config put activity_manager sys.fps.drop 0
+cmd device_config put activity_manager config_per_process_gpu_memory_fraction 0.9
+
+settings put system screen_auto_brightness_adj 1.0
+
+settings put global zram_enabled 0
+
+settings put system peak_refresh_rate 144.0
+
+settings put system min_refresh_rate 144.0
+
+settings put system user_refresh_rate 144.0
+
+settings put global network_recommendations_enabled 0
+
+settings put global network_scoring_ui_enabled 0
+
+settings put global tether_offload_disabled 0 
+
+settings put global wifi_power_save 0
+
+settings put global mobile_data_always_on 0  
+
+settings put global ble_scan_always_enabled 0
+
+settings put global sem_enhanced_cpu_responsiveness 0
+
+settings put global enhanced_processing 0
+
+settings put global app_standby_enabled 1
+
+settings put global adaptive_battery_management_enabled 0
+
+settings put global app_restriction_enabled true
+
+settings put system intelligent_sleep_mode 0
+
+settings put secure adaptive_sleep 0
+
+settings put secure screensaver_enabled 0
+
+settings put secure screensaver_activate_on_sleep 0
+
+settings put secure screensaver_activate_on_dock 0
+
+settings put system multicore_packet_scheduler 1
+
+settings put system gearhead:driving_mode_settings_enabled 0
+
+settings put secure assistant 0
+
+settings put secure smartspace 0
+
+settings put global google_core_control 0
+
+settings put global fstrim_mandatory_interval 1
+
+settings put system deviceLevelList v:1,c:3,g:3
+
+settings put global GPUTUNER_SWITCH true
+
+ settings delete secure masterLocationPackagePrefixBlacklist
+
+ settings delete secure masterLocationPackagePrefixWhitelist
+
+ settings delete system location_ignore_settings_package_whitelist
+
+ settings delete secure location_ignore_settings_package_whitelist
+
+ settings delete global location_ignore_settings_package_whitelist
+
+pm trim-caches 999999999999999
