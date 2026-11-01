@@ -19,8 +19,6 @@ import android.os.Looper
 import android.app.RemoteInput
 import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.cert.KadbCert
-import com.flyfishxu.kadb.cert.OkioFilePrivateKeyStore
-import okio.Path.Companion.toPath
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.Executors
 
@@ -45,7 +43,17 @@ class PairingService : Service() {
     override fun onCreate() {
         super.onCreate()
         manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        KadbCert.configure(OkioFilePrivateKeyStore(java.io.File(filesDir, "adb-key.pem").absolutePath.toPath()))
+        // Reuse the same pairing identity across app restarts.
+        try {
+            val cert = java.io.File(filesDir, "kadb-cert.pem")
+            val key = java.io.File(filesDir, "kadb-key.pem")
+            if (cert.exists() && key.exists()) KadbCert.set(cert.readBytes(), key.readBytes())
+            else {
+                val pair = KadbCert.get()
+                cert.writeBytes(pair.first)
+                key.writeBytes(pair.second)
+            }
+        } catch (_: Exception) { KadbCert.get() }
         if (Build.VERSION.SDK_INT >= 26) {
             manager.createNotificationChannel(NotificationChannel(
                 CHANNEL, "Pareamento ADB", NotificationManager.IMPORTANCE_HIGH
