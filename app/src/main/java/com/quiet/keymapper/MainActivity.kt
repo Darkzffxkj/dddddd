@@ -18,11 +18,15 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.Manifest
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.BaseAdapter
+import android.widget.ImageView
+import android.content.pm.PackageManager
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -304,8 +308,9 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         if (Build.VERSION.SDK_INT >= 30) {
             content.addView(activationCard("Depuração Wi-Fi + Shizuku",
                 "Android 11+. Inicie o Shizuku após parear pela depuração sem fio e autorize o KeyMapper.",
-                listOf("Abrir Shizuku" to { openShizuku() },
-                    "Opções de desenvolvedor" to { openDeveloperOptions() })), cardParams())
+                listOf("Buscar pareamento Wi-Fi" to { startPairingScan() },
+                    "Opções de desenvolvedor" to { openDeveloperOptions() },
+                    "Abrir Shizuku" to { openShizuku() })), cardParams())
         }
         content.addView(activationCard("Computador (USB / ADB)",
             "Android 10+. Ative a depuração USB, conecte ao computador, autorize a chave RSA e inicie o Shizuku.",
@@ -370,12 +375,39 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         }
     }
 
+    /** Mostra o ícone original do APK ao adicionar jogos (sem clones). */
     private fun openManualPicker() {
         val candidates = allApps.filterNot { it.isGame }
         if (candidates.isEmpty()) { toast("Nenhum outro aplicativo disponível"); return }
+        val adapter = object : BaseAdapter() {
+            override fun getCount(): Int = candidates.size
+            override fun getItem(position: Int): Any = candidates[position]
+            override fun getItemId(position: Int): Long = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+                val app = candidates[position]
+                val itemRow = (convertView as? LinearLayout) ?: row().apply {
+                    setPadding(dp(16), dp(9), dp(16), dp(9))
+                    minimumHeight = dp(62)
+                }
+                itemRow.removeAllViews()
+                val icon = ImageView(this@MainActivity).apply {
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setImageDrawable(try {
+                        packageManager.getApplicationIcon(app.packageName)
+                    } catch (_: Exception) { packageManager.defaultActivityIcon })
+                }
+                itemRow.addView(icon, LinearLayout.LayoutParams(dp(42), dp(42)).apply { rightMargin = dp(13) })
+                val labels = column()
+                labels.addView(txt(app.label, 14f, Palette.white, true))
+                labels.addView(txt(app.packageName, 10f, Palette.muted).apply { maxLines = 1 },
+                    LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
+                itemRow.addView(labels, LinearLayout.LayoutParams(0, -2, 1f))
+                return itemRow
+            }
+        }
         AlertDialog.Builder(this)
             .setTitle("Adicionar jogo")
-            .setItems(candidates.map { it.label }.toTypedArray()) { _, which ->
+            .setAdapter(adapter) { _, which ->
                 games.addManually(candidates[which].packageName)
                 refreshGames()
             }
@@ -418,7 +450,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                 showTab(1)
             } else {
                 dialog.dismiss()
-                confirmUnmappedLaunch(app)
+                launchSelectedGame(app)
             }
         }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { leftMargin = dp(9) })
         root.addView(controls)
@@ -516,23 +548,21 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         }
     }
 
-    private fun confirmUnmappedLaunch(app: InstalledApp) {
-        AlertDialog.Builder(this)
-            .setTitle(app.label)
-            .setMessage("As permissões foram verificadas. O motor de mapeamento ainda não faz parte desta versão. Abrir o jogo normalmente, sem controles mapeados?")
-            .setPositiveButton("Abrir sem mapeamento") { _, _ ->
-                if (activation.state() != ShizukuActivation.State.AUTHORIZED) {
-                    showTab(1)
-                    toast("Precisamos de ativação")
-                    return@setPositiveButton
-                }
-                val launch = games.launchIntent(app.packageName)
-                if (launch == null) toast("Não foi possível localizar o jogo")
-                else try { startActivity(launch) }
-                catch (_: Exception) { toast("Falha ao abrir o jogo") }
-            }
-            .setNegativeButton("Cancelar", null)
-            .show()
+    /** A tela de permissões é única; não exibir segunda confirmação ao abrir o jogo. */
+    private fun launchSelectedGame(app: InstalledApp) {
+        if (activation.state() != ShizukuActivation.State.AUTHORIZED) {
+            toast("Precisamos de ativação")
+            showTab(1)
+            return
+        }
+        val launch = games.launchIntent(app.packageName)
+        if (launch == null) {
+            toast("Não foi possível localizar o jogo")
+            return
+        }
+        // A interface abre o jogo original; o motor de mapeamento ainda não está integrado.
+        try { startActivity(launch) }
+        catch (_: Exception) { toast("Falha ao abrir o jogo") }
     }
 
     private fun updateActivation() {
@@ -565,6 +595,34 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         val launch = packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
         if (launch != null) startActivity(launch)
         else startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")))
+    }
+
+    private fun startPairingScan() {
+        if (Build.VERSION.SDK_INT < 30) {
+            toast("Pareamento Wi-Fi disponível no Android 11 ou superior")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2202)
+            return
+        }
+        val intent = Intent(this, PairingService::class.java).setAction(PairingService.ACTION_START)
+        try {
+            startForegroundService(intent)
+            openDeveloperOptions()
+        } catch (_: Exception) {
+            toast("Não foi possível iniciar a descoberta Wi-Fi")
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 2202) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startPairingScan()
+            else info("Notificações necessárias",
+                "Permita notificações para digitar o código de pareamento sem fechar as configurações.")
+        }
     }
 
     private fun openDeveloperOptions() = openSystemScreen(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
