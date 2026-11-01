@@ -9,8 +9,8 @@ android {
         applicationId = "com.quiet.keymapper"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
     buildTypes {
         release {
@@ -27,6 +27,7 @@ android {
 }
 dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("com.flyfishxu:kadb:2.1.5")
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 }
