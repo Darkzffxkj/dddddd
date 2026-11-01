@@ -1,0 +1,10 @@
+pm disable-user --user 0 com.google.android.youtube
+pm disable-user --user 0 com.android.chrome
+pm disable-user --user 0 com.google.android.googlequicksearchbox
+pm disable-user --user 0 com.google.android.apps.docs
+pm disable-user --user 0 com.google.android.gm
+pm disable-user --user 0 com.instagram.android
+pm disable-user --user 0 com.google.android.apps.photos
+pm disable-user --user 0 com.google.android.apps.maps
+pm disable-user --user 0 com.google.android.apps.tachyon
+pm disable-user --user 0 com.google.android.videos
