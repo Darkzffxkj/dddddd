@@ -5,12 +5,13 @@ plugins {
 android {
     namespace = "com.quiet.keymapper"
     compileSdk = 35
+    buildFeatures { aidl = true }
     defaultConfig {
         applicationId = "com.quiet.keymapper"
         minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
     }
     packaging {
         resources {

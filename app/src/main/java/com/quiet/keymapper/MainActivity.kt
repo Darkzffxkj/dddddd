@@ -223,6 +223,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         (page.parent as? ViewGroup)?.removeView(page)
         body.addView(page, FrameLayout.LayoutParams(-1, -1))
         if (index == 1) updateActivation()
+        if (index == 2) optimizerPanel.onTabShown()
     }
 
     private fun createPlayPage() {

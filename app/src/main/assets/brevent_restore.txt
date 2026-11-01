@@ -1,0 +1,10 @@
+pm enable --user 0 com.google.android.youtube
+pm enable --user 0 com.android.chrome
+pm enable --user 0 com.google.android.googlequicksearchbox
+pm enable --user 0 com.google.android.apps.docs
+pm enable --user 0 com.google.android.gm
+pm enable --user 0 com.instagram.android
+pm enable --user 0 com.google.android.apps.photos
+pm enable --user 0 com.google.android.apps.maps
+pm enable --user 0 com.google.android.apps.tachyon
+pm enable --user 0 com.google.android.videos

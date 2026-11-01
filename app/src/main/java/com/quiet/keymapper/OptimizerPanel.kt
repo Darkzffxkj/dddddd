@@ -4,17 +4,17 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.IBinder
+import android.provider.Settings
 import android.telecom.TelecomManager
 import android.provider.Telephony
-import android.os.Build
-import android.provider.Settings
-import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -22,236 +22,302 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuRemoteProcess
 import java.util.concurrent.Executors
 
-/**
- * Otimizador conservador: apenas aplicativos instalados pelo usuário e visíveis ao launcher.
- * Não afirma detectar todos os processos em execução.
- * Shizuku é checado na hora da execução e não há parada automática de apps de sistema.
- */
-class OptimizerPanel(
-    private val activity: Activity,
-    private val openActivation: () -> Unit
-) {
+/** User-initiated hibernation via a Shizuku UserService: actual PS results, never inferred from Recent tasks. */
+class OptimizerPanel(private val activity: Activity, private val openActivation: () -> Unit) {
     val view = ScrollView(activity).apply { clipToPadding = false }
     private val executor = Executors.newSingleThreadExecutor()
-    private val selections = mutableListOf<Pair<InstalledApp, CheckBox>>()
-    private val caption = activity.txt("Carregando aplicativos...", 12f, Palette.muted)
+    private val caption = activity.txt("Verificando Shizuku...", 12f, Palette.muted)
     private val appArea = activity.column()
-    private val stopButton = activity.action("Forçar parada dos selecionados", true) { confirmStop() }
-    private var destroyed = false
+    private val stopButton = activity.action("Hibernar selecionados", true) { confirmStop() }
+    private val rows = mutableListOf<Triple<InstalledApp, CheckBox, Boolean>>()
+    private var closed = false
     private var busy = false
+    private var bound = false
+    @Volatile private var remote: IOptimizerService? = null
+    private val args = Shizuku.UserServiceArgs(
+        ComponentName(activity.packageName, OptimizerUserService::class.java.name)
+    ).daemon(false).processNameSuffix("optimizer").version(5)
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            remote = IOptimizerService.Stub.asInterface(binder)
+            activity.runOnUiThread { if (!closed) refresh() }
+        }
+        override fun onServiceDisconnected(name: ComponentName) {
+            remote = null
+            bound = false
+            activity.runOnUiThread { if (!closed) caption.text = "Shizuku desconectado. Toque em Atualizar." }
+        }
+    }
 
     init {
-        val content = activity.column().apply { setPadding(activity.dp(16), activity.dp(4), activity.dp(16), activity.dp(32)) }
+        val content = activity.column().apply {
+            setPadding(activity.dp(16), activity.dp(4), activity.dp(16), activity.dp(30))
+        }
         view.addView(content)
         content.addView(activity.txt("Otimizar", 21f, Palette.white, true))
         content.addView(activity.txt(
-            "Hibernação manual de aplicativos. Não alteramos processos essenciais, serviços do sistema ou apps protegidos.",
+            "Apps nos Recentes podem estar encerrados. O estado de execução é consultado pelo Shizuku.",
             12f, Palette.muted
-        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(8); bottomMargin = activity.dp(14) })
+        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(8); bottomMargin = activity.dp(12) })
 
         val card = activity.column().apply {
-            background = rounded(Palette.panel, activity.dp(13).toFloat())
-            setPadding(activity.dp(13), activity.dp(13), activity.dp(13), activity.dp(13))
+            background = rounded(Palette.panel, activity.dp(14).toFloat())
+            setPadding(activity.dp(13), activity.dp(13), activity.dp(13), activity.dp(14))
         }
-        card.addView(activity.txt("Aplicativos instalados pelo usuário", 16f, Palette.white, true))
-        card.addView(activity.txt(
-            "Selecione os aplicativos que não estiver usando. A parada pode interromper downloads, mensagens e notificações.",
-            12f, Palette.muted
-        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(7); bottomMargin = activity.dp(10) })
-        card.addView(caption)
-        val tools = activity.row()
-        tools.addView(activity.action("Selecionar seguros", false) { selectSafe() },
-            LinearLayout.LayoutParams(0, -2, 1f))
-        tools.addView(activity.action("Limpar seleção", false) { selections.forEach { it.second.isChecked = false } },
+        card.addView(activity.txt("Hibernator — aplicativos em execução", 16f, Palette.white, true))
+        card.addView(caption, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = activity.dp(7); bottomMargin = activity.dp(11)
+        })
+        val buttons = activity.row()
+        buttons.addView(activity.action("Atualizar", false) { refresh() }, LinearLayout.LayoutParams(0, -2, 1f))
+        buttons.addView(activity.action("Selecionar ativos", false) { selectActive() },
             LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = activity.dp(7) })
-        card.addView(tools, LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(10) })
+        card.addView(buttons)
+        card.addView(activity.action("Limpar seleção", false) { rows.forEach { it.second.isChecked = false } },
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(7) })
         card.addView(appArea, LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(10) })
         card.addView(stopButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(10) })
         content.addView(card)
-        content.addView(activity.txt("Execulte no Brevent", 17f, Palette.white, true),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(21); bottomMargin = activity.dp(7) })
+
+        content.addView(activity.txt("Reativar apps opcionais", 18f, Palette.white, true),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(22) })
         content.addView(activity.txt(
-            "Os comandos abaixo são fornecidos apenas para cópia. Não são executados pelo KeyMapper. " +
-            "O bloco 1 desativa apps e pode interromper serviços que você usa. " +
-            "O bloco 2 contém ajustes experimentais, não verificados para seu aparelho, e pode causar instabilidade ou ser ignorado pelo Android.",
-            12f, Palette.warning
-        ), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(10) })
-        content.addView(activity.action("Copiar 1 — Desativar aplicativos", false) {
-            showCopyWarning("brevent_1.txt", "O comando 1 desativa Gmail, Chrome, YouTube e outros aplicativos. Quer apenas copiar?", "Copiar 1")
-        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(7) })
-        content.addView(activity.action("Copiar 2 — Ajustes experimentais", false) {
-            showCopyWarning("brevent_2.txt", "O bloco 2 não é uma otimização comprovada. Pode prejudicar energia, memória e estabilidade. Quer apenas copiar?", "Copiar 2")
-        })
-        content.addView(activity.txt(
-            "Reversão do bloco 1: use pm enable --user 0 seguido do pacote desativado. " +
-            "Não execute os dois blocos sem conhecer os efeitos.",
+            "Selecione quais aplicativos do comando de desativação deseja reativar. A operação não é automática.",
             12f, Palette.muted
-        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(11) })
-        loadApps()
+        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(5); bottomMargin = activity.dp(9) })
+        content.addView(activity.action("Selecionar e reativar apps", false) { showRestorePicker() })
+        content.addView(activity.action("Copiar — comandos para reativar", false) {
+            copyAsset("brevent_restore.txt")
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(6) })
+
+        content.addView(activity.txt("Execute no Brevent", 18f, Palette.white, true),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(20) })
+        content.addView(activity.txt(
+            "Os comandos são copiados, nunca executados automaticamente. O segundo bloco contém ajustes " +
+            "experimentais sem garantia de aumento de FPS e pode prejudicar bateria e estabilidade.",
+            12f, Palette.warning
+        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(6); bottomMargin = activity.dp(10) })
+        content.addView(activity.action("Copiar 1 — Desativar aplicativos", false) {
+            warnCopy("brevent_1.txt", "O bloco 1 desativa Gmail, Chrome, YouTube e outros apps. Copiar?")
+        })
+        content.addView(activity.action("Performance Max 🧊", false) {
+            warnCopy("brevent_2.txt", "Performance Max contém parâmetros não validados que podem ser ignorados ou causar instabilidade. Copiar?")
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(7) })
+        content.addView(activity.txt(
+            "Apps essenciais, serviços Android, teclado, launcher e o próprio Shizuku são protegidos. " +
+            "O Android pode reiniciar processos que forem encerrados.",
+            12f, Palette.muted
+        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(12) })
     }
 
-    private fun loadApps() {
+    fun onTabShown() { bindIfNeeded(); refresh() }
+
+    private fun bindIfNeeded() {
+        if (closed || bound) return
+        try {
+            if (!Shizuku.pingBinder() ||
+                Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                caption.text = "Precisamos de ativação Shizuku para consultar processos."
+                return
+            }
+            Shizuku.bindUserService(args, connection)
+            bound = true
+        } catch (_: Exception) { caption.text = "Erro ao conectar ao serviço Shizuku." }
+    }
+
+    fun refresh() {
+        if (closed || busy) return
+        bindIfNeeded()
+        val service = remote
+        caption.text = if (service == null) "Conectando ao Shizuku..." else "Lendo processos em execução..."
         executor.execute {
-            val candidates = try {
-                val installed = GameRepository(activity).allLaunchable()
-                val pm = activity.packageManager
-                val protected = protectedPackages()
-                installed.filter { app ->
-                    app.packageName !in protected && !isSystemPackage(pm, app.packageName)
-                }
-            } catch (_: Exception) { emptyList() }
+            val candidates = try { loadUserApps() } catch (_: Exception) { emptyList() }
+            val processes: Set<String>? = try { service?.listRunningProcesses()?.toSet() }
+                catch (_: Exception) { null }
+            val good = processes != null && "!ERROR_PS" !in processes
+            val list = candidates.map { app ->
+                app to (good && processes!!.any { it == app.packageName || it.startsWith(app.packageName + ":") })
+            }.sortedWith(compareByDescending<Pair<InstalledApp, Boolean>> { it.second }.thenBy { it.first.label.lowercase() })
             activity.runOnUiThread {
-                if (destroyed) return@runOnUiThread
+                if (closed) return@runOnUiThread
+                rows.clear()
                 appArea.removeAllViews()
-                selections.clear()
-                caption.text = if (candidates.isEmpty())
-                    "Nenhum aplicativo elegível visível. O Android pode limitar a descoberta."
-                else "Encontrados " + candidates.size + " aplicativos. Selecione os que deseja parar."
-                candidates.forEach { app -> addAppRow(app) }
+                val running = list.count { it.second }
+                caption.text = if (good) "${running} em execução • ${list.size} apps de usuário"
+                    else "Consulta indisponível. Autorize o Shizuku e toque em Atualizar."
+                list.forEach { (app, active) -> addAppRow(app, active, good) }
             }
         }
     }
 
-    private fun protectedPackages(): Set<String> {
-        val result = mutableSetOf(
-            activity.packageName, "android", "com.android.systemui",
-            "com.android.settings", "com.android.phone", "com.android.dialer",
-            "com.android.providers.settings", "com.google.android.gms",
-            "com.google.android.gsf", "moe.shizuku.privileged.api"
-        )
+    private fun loadUserApps(): List<InstalledApp> {
         val pm = activity.packageManager
+        val ignored = protectedPackages()
+        @Suppress("DEPRECATION")
+        val installed = pm.getInstalledApplications(0)
+        return installed.asSequence().filter { a ->
+            a.enabled && a.packageName !in ignored &&
+                a.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+        }.map { a ->
+            val label = try { pm.getApplicationLabel(a).toString() } catch (_: Exception) { a.packageName }
+            @Suppress("DEPRECATION")
+            val game = a.category == ApplicationInfo.CATEGORY_GAME ||
+                (a.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+            InstalledApp(a.packageName, label, game)
+        }.distinctBy { it.packageName }.sortedBy { it.label.lowercase() }.toList()
+    }
+
+    private fun protectedPackages(): Set<String> {
+        val set = mutableSetOf(activity.packageName, "android", "com.android.systemui",
+            "com.android.settings", "com.android.phone", "com.android.dialer",
+            "com.android.permissioncontroller", "com.google.android.gms",
+            "com.google.android.gsf", "moe.shizuku.privileged.api")
         try {
             val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
             @Suppress("DEPRECATION")
-            pm.resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName?.let { result.add(it) }
+            activity.packageManager.resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo?.packageName?.let { set.add(it) }
+        } catch (_: Exception) { }
+        try { Settings.Secure.getString(activity.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?.substringBefore('/')?.let { set.add(it) } } catch (_: Exception) { }
+        try { Settings.Secure.getString(activity.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?.split(':')?.forEach { name -> name.substringBefore('/').takeIf { it.isNotBlank() }?.let { set.add(it) } }
         } catch (_: Exception) { }
         try {
-            Settings.Secure.getString(activity.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-                ?.substringBefore('/')?.let { result.add(it) }
+            (activity.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)
+                ?.defaultDialerPackage?.let { set.add(it) }
+            Telephony.Sms.getDefaultSmsPackage(activity)?.let { set.add(it) }
         } catch (_: Exception) { }
-        try {
-            Settings.Secure.getString(activity.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-                ?.split(':')?.forEach { entry -> entry.substringBefore('/').takeIf { it.isNotBlank() }?.let { result.add(it) } }
-        } catch (_: Exception) { }
-        try {
-            val telecom = activity.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-            telecom?.defaultDialerPackage?.let { result.add(it) }
-            Telephony.Sms.getDefaultSmsPackage(activity)?.let { result.add(it) }
-        } catch (_: Exception) { }
-        return result
+        return set
     }
 
-    private fun isSystemPackage(pm: PackageManager, name: String): Boolean = try {
-        @Suppress("DEPRECATION")
-        val flags = pm.getApplicationInfo(name, 0).flags
-        flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
-    } catch (_: Exception) { true }
-
-    private fun addAppRow(app: InstalledApp) {
-        val line = activity.row().apply { setPadding(0, activity.dp(8), 0, activity.dp(8)) }
+    private fun addAppRow(app: InstalledApp, active: Boolean, good: Boolean) {
+        val row = activity.row().apply { setPadding(0, activity.dp(8), 0, activity.dp(8)) }
         val icon = ImageView(activity).apply {
-            scaleType = ImageView.ScaleType.FIT_CENTER
             setImageDrawable(try { activity.packageManager.getApplicationIcon(app.packageName) }
-            catch (_: Exception) { activity.packageManager.defaultActivityIcon })
+                catch (_: Exception) { activity.packageManager.defaultActivityIcon })
         }
-        line.addView(icon, LinearLayout.LayoutParams(activity.dp(35), activity.dp(35)).apply { rightMargin = activity.dp(8) })
+        row.addView(icon, LinearLayout.LayoutParams(activity.dp(35), activity.dp(35)).apply {
+            rightMargin = activity.dp(9)
+        })
         val labels = activity.column()
         labels.addView(activity.txt(app.label, 13f, Palette.white, true))
-        labels.addView(activity.txt(app.packageName, 10f, Palette.muted),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(2) })
-        line.addView(labels, LinearLayout.LayoutParams(0, -2, 1f))
-        val cb = CheckBox(activity)
-        cb.buttonTintList = android.content.res.ColorStateList.valueOf(Palette.violetSoft)
-        line.addView(cb)
-        line.setOnClickListener { cb.isChecked = !cb.isChecked }
-        selections.add(app to cb)
-        appArea.addView(line)
+        labels.addView(activity.txt(when {
+            !good -> "Estado desconhecido"
+            active -> "● Em execução"
+            else -> "Parado"
+        }, 11f, if (active && good) Palette.success else Palette.muted))
+        row.addView(labels, LinearLayout.LayoutParams(0, -2, 1f))
+        val box = CheckBox(activity).apply {
+            buttonTintList = android.content.res.ColorStateList.valueOf(Palette.violetSoft)
+            isEnabled = active && good
+        }
+        row.addView(box)
+        row.setOnClickListener { if (box.isEnabled) box.isChecked = !box.isChecked }
+        rows.add(Triple(app, box, active))
+        appArea.addView(row)
         appArea.addView(View(activity).apply { setBackgroundColor(Palette.line) },
             LinearLayout.LayoutParams(-1, activity.dp(1)))
     }
 
-    private fun selectSafe() {
-        // Jogos não são pré-selecionados para evitar fechar o jogo do usuário.
-        selections.forEach { (app, cb) -> cb.isChecked = !app.isGame }
+    private fun selectActive() {
+        rows.forEach { (app, box, active) -> box.isChecked = active && box.isEnabled && !app.isGame }
     }
 
     private fun confirmStop() {
-        if (busy) return
-        if (!Shizuku.pingBinder() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+        if (remote == null) { bindIfNeeded(); toast("Shizuku não está conectado"); return }
+        val chosen = rows.filter { it.second.isChecked && it.third }.map { it.first.packageName }
+        if (chosen.isEmpty()) { toast("Selecione aplicativos em execução"); return }
+        AlertDialog.Builder(activity).setTitle("Hibernar ${chosen.size} aplicativos?")
+            .setMessage("Aplicativos selecionados poderão perder tarefas não salvas e parar de enviar notificações. Continuar?")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Hibernar") { _, _ -> applyActions(chosen, false) }.show()
+    }
+
+    private val restoreApps = listOf(
+        "com.google.android.youtube", "com.android.chrome", "com.google.android.googlequicksearchbox",
+        "com.google.android.apps.docs", "com.google.android.gm", "com.instagram.android",
+        "com.google.android.apps.photos", "com.google.android.apps.maps",
+        "com.google.android.apps.tachyon", "com.google.android.videos"
+    )
+
+    private fun showRestorePicker() {
+        if (remote == null) {
             AlertDialog.Builder(activity).setTitle("Precisamos de ativação")
-                .setMessage("Autorize o KeyMapper no Shizuku para solicitar parada de apps.")
+                .setMessage("Ative o Shizuku para reativar apps. Os comandos podem ser copiados sem ativação.")
                 .setNegativeButton("Cancelar", null)
                 .setPositiveButton("Ativar") { _, _ -> openActivation() }.show()
             return
         }
-        val chosen = selections.filter { it.second.isChecked }.map { it.first }
-        if (chosen.isEmpty()) {
-            Toast.makeText(activity, "Selecione um aplicativo", Toast.LENGTH_SHORT).show()
-            return
-        }
-        AlertDialog.Builder(activity).setTitle("Confirmar parada")
-            .setMessage("Solicitar parada de " + chosen.size +
-                " aplicativos selecionados? Isso pode interromper mensagens, uploads e tarefas não salvas.")
+        val checked = BooleanArray(restoreApps.size)
+        AlertDialog.Builder(activity).setTitle("Reativar apps opcionais")
+            .setMultiChoiceItems(restoreApps.toTypedArray(), checked) { _, index, value -> checked[index] = value }
             .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Forçar parada") { _, _ -> stopApps(chosen) }.show()
+            .setPositiveButton("Continuar") { _, _ ->
+                val chosen = restoreApps.filterIndexed { i, _ -> checked[i] }
+                if (chosen.isEmpty()) { toast("Selecione pelo menos um app"); return@setPositiveButton }
+                AlertDialog.Builder(activity).setTitle("Confirmar reativação")
+                    .setMessage("Reativar ${chosen.size} apps para o usuário 0?")
+                    .setNegativeButton("Cancelar", null)
+                    .setPositiveButton("Reativar") { _, _ -> applyActions(chosen, true) }.show()
+            }.show()
     }
 
-    private fun stopApps(apps: List<InstalledApp>) {
+    private fun applyActions(packages: List<String>, enable: Boolean) {
         if (busy) return
+        val svc = remote ?: return
         busy = true
         stopButton.isEnabled = false
-        caption.text = "Solicitando paradas..."
         executor.execute {
             val protected = protectedPackages()
-            val results = apps.take(60).map { app ->
-                val eligible = app.packageName !in protected &&
-                    Regex("[a-zA-Z0-9_]+(\\.[a-zA-Z0-9_]+)+").matches(app.packageName) &&
-                    !isSystemPackage(activity.packageManager, app.packageName)
-                app to if (eligible) stopOne(app.packageName) else false
+            val result = packages.distinct().take(60).map { pkg ->
+                val code = try {
+                    if (!enable && pkg in protected) -2
+                    else if (enable) svc.enableOptionalApp(pkg)
+                    else svc.forceStopUserApp(pkg)
+                } catch (_: Exception) { -6 }
+                pkg to code
             }
-            val success = results.count { it.second }
             activity.runOnUiThread {
-                if (destroyed) return@runOnUiThread
+                if (closed) return@runOnUiThread
                 busy = false
                 stopButton.isEnabled = true
-                caption.text = "Solicitações concluídas: " + success + "/" + results.size +
-                    ". Não é garantido que o Android mantenha os processos encerrados."
-                results.filter { it.second }.forEach { (_, _) -> }
-                Toast.makeText(activity, caption.text, Toast.LENGTH_LONG).show()
+                val success = result.count { it.second == 0 }
+                if (success < result.size)
+                    AlertDialog.Builder(activity).setTitle("Algumas operações falharam")
+                        .setMessage(result.filter { it.second != 0 }.joinToString("\n") {
+                            "${it.first}: código ${it.second}"
+                        }).setPositiveButton("OK", null).show()
+                else toast("${success} operações concluídas")
+                refresh()
             }
         }
     }
 
-    private fun stopOne(pkg: String): Boolean = try {
-        // Shizuku 13 expõe newProcess internamente. Implementação provisória,
-        // encapsulada e com falha segura; migrar para UserService na versão final.
-        val method = Shizuku::class.java.getDeclaredMethod(
-            "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java
-        ).apply { isAccessible = true }
-        val command = arrayOf("am", "force-stop", pkg)
-        val p = method.invoke(null, command, null, null) as ShizukuRemoteProcess
-        try { p.waitFor() == 0 } finally { p.destroy() }
-    } catch (_: Exception) { false }
-
-    private fun showCopyWarning(asset: String, warning: String, button: String) {
-        AlertDialog.Builder(activity).setTitle("Atenção").setMessage(warning)
-            .setNegativeButton("Cancelar", null)
-            .setPositiveButton(button) { _, _ -> copyFromAssets(asset) }.show()
+    private fun warnCopy(file: String, warning: String) {
+        AlertDialog.Builder(activity).setTitle("Atenção")
+            .setMessage(warning).setNegativeButton("Cancelar", null)
+            .setPositiveButton("Copiar") { _, _ -> copyAsset(file) }.show()
     }
 
-    private fun copyFromAssets(asset: String) {
+    private fun copyAsset(name: String) {
         try {
-            val text = activity.assets.open(asset).bufferedReader().use { it.readText() }
+            val content = activity.assets.open(name).bufferedReader().use { it.readText() }
             val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Comandos Brevent", text))
-            Toast.makeText(activity, "Comandos copiados. Nenhuma alteração foi aplicada.", Toast.LENGTH_LONG).show()
-        } catch (_: Exception) {
-            Toast.makeText(activity, "Falha ao copiar", Toast.LENGTH_SHORT).show()
-        }
+            clipboard.setPrimaryClip(ClipData.newPlainText("Comandos Brevent", content))
+            toast("Comandos copiados. Nenhuma alteração executada.")
+        } catch (_: Exception) { toast("Falha ao copiar") }
     }
 
-    fun close() { destroyed = true; executor.shutdownNow() }
+    private fun toast(message: String) = Toast.makeText(activity, message, Toast.LENGTH_SHORT).show()
+
+    fun close() {
+        closed = true
+        try { if (bound) Shizuku.unbindUserService(args, connection, true) } catch (_: Exception) { }
+        remote = null
+        executor.shutdownNow()
+    }
 }
