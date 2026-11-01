@@ -4,7 +4,7 @@ plugins {
 }
 android {
     namespace = "com.quiet.keymapper"
-    compileSdk = 35
+    compileSdk = 37
     defaultConfig {
         applicationId = "com.quiet.keymapper"
         minSdk = 29

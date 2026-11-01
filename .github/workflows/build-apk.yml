@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+          sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-37' 'build-tools;36.0.0' 'platform-tools'
       - name: Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
