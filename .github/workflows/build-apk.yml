@@ -18,13 +18,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Usar Android SDK do runner
+        shell: bash
+        run: |
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
       - name: Android API 35 e Build Tools
         shell: bash
         run: |
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+          sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
       - name: Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
