@@ -56,6 +56,8 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private lateinit var gameCount: TextView
     private lateinit var playTab: TextView
     private lateinit var activationTab: TextView
+    private lateinit var optimizeTab: TextView
+    private lateinit var optimizerPanel: OptimizerPanel
     private lateinit var body: FrameLayout
     private lateinit var playPage: ScrollView
     private lateinit var activationPage: ScrollView
@@ -115,6 +117,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         executor.shutdownNow()
         handler.removeCallbacks(deviceRefresh)
         permissionsDialog?.dismiss()
+        if (::optimizerPanel.isInitialized) optimizerPanel.dispose()
         Shizuku.removeBinderReceivedListener(onShizukuArrived)
         Shizuku.removeBinderDeadListener(onShizukuDead)
         Shizuku.removeRequestPermissionResultListener(onShizukuPermission)
@@ -185,8 +188,10 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         }
         playTab = tabButton("Jogar") { showTab(0) }
         activationTab = tabButton("Ativação") { showTab(1) }
+        optimizeTab = tabButton("Otimizar") { showTab(2) }
         tabs.addView(playTab, LinearLayout.LayoutParams(0, dp(43), 1f))
         tabs.addView(activationTab, LinearLayout.LayoutParams(0, dp(43), 1f))
+        tabs.addView(optimizeTab, LinearLayout.LayoutParams(0, dp(43), 1f))
         root.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply {
             setMargins(dp(16), 0, dp(16), dp(10))
         })
@@ -194,6 +199,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         root.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         createPlayPage()
         createActivationPage()
+        optimizerPanel = OptimizerPanel(this, activation) { showTab(1) }
         showTab(0)
     }
 
@@ -207,8 +213,13 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private fun showTab(index: Int) {
         playTab.background = rounded(if (index == 0) Palette.primary else Palette.panel, dp(10).toFloat())
         activationTab.background = rounded(if (index == 1) Palette.primary else Palette.panel, dp(10).toFloat())
+        optimizeTab.background = rounded(if (index == 2) Palette.primary else Palette.panel, dp(10).toFloat())
         body.removeAllViews()
-        val page = if (index == 0) playPage else activationPage
+        val page = when (index) {
+            0 -> playPage
+            1 -> activationPage
+            else -> optimizerPanel.view
+        }
         (page.parent as? ViewGroup)?.removeView(page)
         body.addView(page, FrameLayout.LayoutParams(-1, -1))
         if (index == 1) updateActivation()
@@ -643,11 +654,12 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
     private fun showAppMenu() {
         AlertDialog.Builder(this).setTitle("KeyMapper Pro")
-            .setItems(arrayOf("Jogar", "Ativação", "Atualizar jogos", "Sobre")) { _, option ->
+             .setItems(arrayOf("Jogar", "Ativação", "Otimizar", "Atualizar jogos", "Sobre")) { _, option ->
                 when (option) {
                     0 -> showTab(0)
                     1 -> showTab(1)
-                    2 -> refreshGames()
+                    2 -> showTab(2)
+                    3 -> refreshGames()
                     else -> info("KeyMapper Pro 0.2", "Interface roxa, permissões reais, jogos e periféricos Android 10+.")
                 }
             }.show()
