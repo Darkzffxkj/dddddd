@@ -40,12 +40,12 @@ class OptimizerUserService : IOptimizerService.Stub() {
     }
 
     override fun listRunningProcesses(): Array<String> {
-        if (!authorizedUid()) return emptyArray()
+        if (!authorizedUid()) return arrayOf("!ERROR_PS")
         return try {
             var data = exec("/system/bin/ps", "-A", "-o", "NAME")
             if (data.first != 0) {
                 data = exec("/system/bin/ps", "-A")
-                if (data.first != 0) return emptyArray()
+                if (data.first != 0) return arrayOf("!ERROR_PS")
                 return data.second.lineSequence().drop(1)
                     .mapNotNull { it.trim().split(Regex("\\s+")).lastOrNull() }
                     .filter { it.isNotBlank() }.distinct().toList().toTypedArray()
@@ -53,7 +53,7 @@ class OptimizerUserService : IOptimizerService.Stub() {
             data.second.lineSequence().map { it.trim() }
                 .filter { it.isNotEmpty() && it != "NAME" }
                 .distinct().toList().toTypedArray()
-        } catch (_: Exception) { emptyArray() }
+        } catch (_: Exception) { arrayOf("!ERROR_PS") }
     }
 
     override fun forceStopUserApp(packageName: String): Int {
