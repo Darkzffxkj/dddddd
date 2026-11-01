@@ -4,7 +4,7 @@ plugins {
 }
 android {
     namespace = "com.quiet.keymapper"
-    compileSdk = 37
+    compileSdk = 35
     defaultConfig {
         applicationId = "com.quiet.keymapper"
         minSdk = 29
@@ -27,7 +27,7 @@ android {
 }
 dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
-    implementation("com.flyfishxu:kadb:2.1.5")
+    implementation("com.flyfishxu:kadb:1.3.0")
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 }
