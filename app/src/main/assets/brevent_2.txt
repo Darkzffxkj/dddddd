@@ -158,11 +158,11 @@ settings put global network_recommendations_enabled 0
 
 settings put global network_scoring_ui_enabled 0
 
-settings put global tether_offload_disabled 0 
+settings put global tether_offload_disabled 0
 
 settings put global wifi_power_save 0
 
-settings put global mobile_data_always_on 0  
+settings put global mobile_data_always_on 0
 
 settings put global ble_scan_always_enabled 0
 
@@ -202,14 +202,14 @@ settings put system deviceLevelList v:1,c:3,g:3
 
 settings put global GPUTUNER_SWITCH true
 
- settings delete secure masterLocationPackagePrefixBlacklist
+settings delete secure masterLocationPackagePrefixBlacklist
 
- settings delete secure masterLocationPackagePrefixWhitelist
+settings delete secure masterLocationPackagePrefixWhitelist
 
- settings delete system location_ignore_settings_package_whitelist
+settings delete system location_ignore_settings_package_whitelist
 
- settings delete secure location_ignore_settings_package_whitelist
+settings delete secure location_ignore_settings_package_whitelist
 
- settings delete global location_ignore_settings_package_whitelist
+settings delete global location_ignore_settings_package_whitelist
 
 pm trim-caches 999999999999999
