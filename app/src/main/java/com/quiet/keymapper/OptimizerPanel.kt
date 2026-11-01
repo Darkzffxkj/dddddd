@@ -8,7 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import android.app.role.RoleManager
+import android.telecom.TelecomManager
+import android.provider.Telephony
 import android.os.Build
 import android.provider.Settings
 import android.view.Gravity
@@ -135,13 +136,11 @@ class OptimizerPanel(
             Settings.Secure.getString(activity.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
                 ?.split(':')?.forEach { entry -> entry.substringBefore('/').takeIf { it.isNotBlank() }?.let { result.add(it) } }
         } catch (_: Exception) { }
-        if (Build.VERSION.SDK_INT >= 29) {
-            val roles = activity.getSystemService(Context.ROLE_SERVICE) as? RoleManager
-            listOf(RoleManager.ROLE_DIALER, RoleManager.ROLE_SMS, RoleManager.ROLE_HOME).forEach { role ->
-                try { if (roles?.isRoleAvailable(role) == true) result.addAll(roles.getRoleHolders(role)) }
-                catch (_: Exception) { }
-            }
-        }
+        try {
+            val telecom = activity.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+            telecom?.defaultDialerPackage?.let { result.add(it) }
+            Telephony.Sms.getDefaultSmsPackage(activity)?.let { result.add(it) }
+        } catch (_: Exception) { }
         return result
     }
 

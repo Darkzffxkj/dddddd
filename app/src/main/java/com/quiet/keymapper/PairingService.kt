@@ -18,9 +18,6 @@ import android.os.IBinder
 import android.os.Looper
 import android.app.RemoteInput
 import com.flyfishxu.kadb.Kadb
-import com.flyfishxu.kadb.cert.KadbCert
-import com.flyfishxu.kadb.cert.OkioFilePrivateKeyStore
-import okio.Path.Companion.toPath
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.Executors
 
@@ -45,7 +42,6 @@ class PairingService : Service() {
     override fun onCreate() {
         super.onCreate()
         manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        KadbCert.configure(OkioFilePrivateKeyStore(java.io.File(filesDir, "adb-key.pem").absolutePath.toPath()))
         if (Build.VERSION.SDK_INT >= 26) {
             manager.createNotificationChannel(NotificationChannel(
                 CHANNEL, "Pareamento ADB", NotificationManager.IMPORTANCE_HIGH
