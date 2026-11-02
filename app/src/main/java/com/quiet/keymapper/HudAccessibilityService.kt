@@ -4,6 +4,11 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
+import android.app.ActivityManager
+import android.os.Build
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.BroadcastReceiver
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Path
@@ -40,6 +45,14 @@ class HudAccessibilityService : AccessibilityService() {
     private var bubble: View? = null
     private var menu: View? = null
     private var panel: View? = null
+    private var monitor: TextView? = null
+    private var pendingExit: Runnable? = null
+    private var pendingExitPackage: String? = null
+    private val screenOffReceiver = object: BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if(intent?.action == Intent.ACTION_SCREEN_OFF) leaveGame()
+        }
+    }
     private var bindKey: ((Int) -> Unit)? = null
     private var consumedBindingUp = -1
     private val held = mutableSetOf<Int>()
@@ -51,6 +64,7 @@ class HudAccessibilityService : AccessibilityService() {
             if(game.isNotEmpty() && foreground == game && !editing && panel == null) {
                 if(bubble != null && bubble?.isAttachedToWindow == false) bubble=null
                 if(bubble == null) showBubble()
+                ensureMonitor()
             }
             handler.postDelayed(this, 2200L)
         }
@@ -65,6 +79,7 @@ class HudAccessibilityService : AccessibilityService() {
         current = this
         alive=true
         handler.postDelayed(keepHud,2200L)
+        try { registerReceiver(screenOffReceiver,IntentFilter(Intent.ACTION_SCREEN_OFF)) } catch (_:Exception) {}
         serviceInfo = serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         }
@@ -90,47 +105,90 @@ class HudAccessibilityService : AccessibilityService() {
             }
             getSharedPreferences("referencia_hud_profiles_v7",Context.MODE_PRIVATE)
                 .edit().putString("active_game",packageName).apply()
-            if (foreground == game) showBubble()
+            if (foreground == game) { showBubble(); ensureMonitor() }
         }
     }
-    override fun onAccessibilityEvent(e:AccessibilityEvent?) {
-        val t=e?.eventType ?: return
-        if(t!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            t!=AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
+    /** The current game's window is the only source of permission to show our overlay.
+     * A non-game foreground activity schedules removal. System transient windows,
+     * game boosters and keyboards do not count as a confirmed exit.
+     */
+    override fun onAccessibilityEvent(e: AccessibilityEvent?) {
+        val type=e?.eventType ?: return
+        if(type!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            type!=AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
         val incoming=e.packageName?.toString().orEmpty()
-        if(incoming.isBlank() || incoming==packageName || game.isBlank()) return
+        if(incoming.isBlank() || game.isBlank()) return
         if(incoming==game) {
+            cancelPendingExit()
             foreground=game
             seenGameOnce=true
-            windowGeneration++
             transientWindow=false
             if(!editing && bubble==null) showBubble()
+            ensureMonitor()
             return
         }
-        // The game's loading screen, Android keyboard, permission sheets and game
-        // booster may use other packages. They do not justify removing the HUD.
-        // Only a stable transition to the HOME launcher hides it.
-        if(!seenGameOnce || t!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if(type!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || !seenGameOnce) return
+        // The app's MainActivity is a definite game exit; accessibility overlays
+        // may generate events from this package but never masquerade as MainActivity.
+        if(incoming==packageName) {
+            val cls=e.className?.toString().orEmpty()
+            if(cls.contains("MainActivity")) leaveGame()
+            return
+        }
         val home=try {
             @Suppress("DEPRECATION")
-            packageManager.resolveActivity(android.content.Intent(android.content.Intent.ACTION_MAIN)
-                .addCategory(android.content.Intent.CATEGORY_HOME),0)?.activityInfo?.packageName
+            packageManager.resolveActivity(Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_HOME),0)?.activityInfo?.packageName
         } catch (_:Exception) { null }
         if(incoming==home) {
-            val generation=++windowGeneration
-            handler.postDelayed({
-                if(windowGeneration==generation && foreground==game) {
-                    foreground=""
-                    cancelAllPresses()
-                    closeAll()
-                }
-            },15000L)
+            scheduleExit(incoming,450L)
+            return
         }
+        val transient=incoming=="android" || incoming=="com.android.systemui" ||
+            incoming=="com.google.android.gms" || incoming.contains("permissioncontroller") ||
+            incoming.contains("inputmethod") || incoming.contains("keyboard") ||
+            incoming.contains("gamebooster",true) ||
+            incoming.startsWith("com.samsung.android.game.")
+        if(transient) return
+        // A genuine transition to another application is a game exit.
+        // Debounce briefly so a transient login/loading activity does not hide the HUD.
+        scheduleExit(incoming,1750L)
+    }
+    private fun cancelPendingExit() {
+        pendingExit?.let(handler::removeCallbacks)
+        pendingExit=null
+        pendingExitPackage=null
+    }
+    private fun scheduleExit(otherPackage:String,delay:Long) {
+        if(pendingExitPackage==otherPackage) return
+        cancelPendingExit()
+        pendingExitPackage=otherPackage
+        val pending=Runnable {
+            pendingExit=null
+            pendingExitPackage=null
+            if(game.isNotEmpty() && foreground==game) leaveGame()
+        }
+        pendingExit=pending
+        handler.postDelayed(pending,delay)
+    }
+    private fun leaveGame() {
+        cancelPendingExit()
+        foreground=""
+        seenGameOnce=false
+        transientWindow=false
+        cancelAllPresses()
+        closeAll()
+        // Keep the per-game profile saved; only the active UI session is closed.
+        game=""
+        getSharedPreferences("referencia_hud_profiles_v7",Context.MODE_PRIVATE)
+            .edit().remove("active_game").apply()
     }
     override fun onInterrupt() {}
     override fun onDestroy() {
         alive=false
+        cancelPendingExit()
         handler.removeCallbacks(keepHud)
+        try { unregisterReceiver(screenOffReceiver) } catch (_:Exception) {}
         cancelAllPresses()
         closeAll()
         if (current === this) current = null
@@ -238,17 +296,45 @@ class HudAccessibilityService : AccessibilityService() {
     private fun add(v:View,p:WindowManager.LayoutParams):Boolean =
         try { wm.addView(v,p);true } catch (_:Exception) { false }
     private fun remove(v:View?) { if(v!=null)try { wm.removeView(v) }catch(_:Exception){} }
+    private fun ensureMonitor() {
+        if(game.isBlank() || foreground!=game || !profile.showDeviceMonitor) {
+            remove(monitor);monitor=null;return
+        }
+        val activity=getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memory=ActivityManager.MemoryInfo()
+        val line=try {
+            activity.getMemoryInfo(memory)
+            val free=memory.availMem.toDouble()/1_073_741_824.0
+            val total=memory.totalMem.toDouble()/1_073_741_824.0
+            String.format(java.util.Locale.getDefault(),
+                "%s  |  RAM %.1f / %.1f GB livre", Build.MODEL,free,total)
+        } catch (_:Exception) { Build.MODEL }
+        if(monitor==null) {
+            val v=txt(line,11f).apply {
+                setPadding(dp(10),dp(5),dp(10),dp(5))
+                background=bg(0xE31C132A.toInt(),0xFF8849D0.toInt())
+            }
+            val params=lp(-2,-2).apply {
+                flags=flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                gravity=Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                x=0;y=dp(50)
+            }
+            if(add(v,params)) monitor=v
+        } else monitor?.text=line
+    }
     private fun closeMenu(){remove(menu);menu=null}
     private fun closePanel(){remove(panel);panel=null;editing=false;bindKey=null;showBubble()}
     private fun closeAll(){
         remove(menu);menu=null;remove(panel);panel=null;remove(bubble);bubble=null
+        remove(monitor);monitor=null
         editing=false;bindKey=null;cancelAllPresses()
     }
     private fun save(){ if(game.isNotEmpty()) store.save(game,profile) }
     private fun cornerPosition(p:WindowManager.LayoutParams,c:Int) {
         val sz=size()
-        p.x=if(c%2==0) dp(10) else sz.x-dp(62)
-        p.y=if(c<2) dp(60) else sz.y-dp(108)
+        val side=dp(profile.bubbleSize.coerceIn(40,82))
+        p.x=if(c%2==0) dp(10) else sz.x-side-dp(10)
+        p.y=if(c<2) dp(60) else sz.y-side-dp(56)
     }
     private fun showBubble(){
         if(bubble!=null || panel!=null || game.isEmpty() || foreground!=game)return
@@ -263,7 +349,8 @@ class HudAccessibilityService : AccessibilityService() {
             }
             contentDescription="Referência — abrir menu"
         }
-        val params=lp(dp(52),dp(52))
+        val side=dp(profile.bubbleSize.coerceIn(40,82))
+        val params=lp(side,side)
         cornerPosition(params,store.corner())
         var downX=0f;var downY=0f;var wasX=0;var wasY=0;var dragged=false
         v.setOnTouchListener { _,e ->
@@ -349,7 +436,8 @@ class HudAccessibilityService : AccessibilityService() {
     }
     private fun makeMarker(root:FrameLayout,c:HudControl){
         val sz=size()
-        val side=dp(if(c.kind=="JOYSTICK") 108 else 74)
+        val defaultSide=if(c.kind=="JOYSTICK")108 else 74
+        val side=dp(defaultSide*profile.hudScale.coerceIn(50,160)/100)
         val v=FrameLayout(this)
         v.addView(HudMarkerView(this,c),FrameLayout.LayoutParams(-1,-1))
         val gear=txt("⚙",21f).apply {
@@ -450,63 +538,184 @@ class HudAccessibilityService : AccessibilityService() {
             LinearLayout.LayoutParams(-1,dp(42)).apply{topMargin=dp(9)})
         val sz=size();root.addView(box,FrameLayout.LayoutParams(min(sz.x-dp(20),dp(410)),-2,Gravity.CENTER))
     }
-    private fun openSettings(){
+    // Main menu follows the five categories in the supplied reference, adapted
+    // to the project's existing dark-purple Android visual language.
+    private fun openSettings() {
         val root=fullScreen(false)
         val scroll=ScrollView(this)
+        val container=col().apply {
+            background=bg(0xF3181025.toInt(),0xFFB784F5.toInt())
+            setPadding(dp(15),dp(14),dp(15),dp(16))
+        }
+        val header=row()
+        header.addView(txt("Configurações",19f),LinearLayout.LayoutParams(0,-2,1f))
+        header.addView(btn("✕"){closePanel()},LinearLayout.LayoutParams(dp(49),dp(42)))
+        container.addView(header)
+        container.addView(txt("REFERÊNCIA  •  AJUSTES POR JOGO",10f).apply {
+            setTextColor(0xFFC8A4F6.toInt())
+        },LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(4);bottomMargin=dp(11)})
+        fun category(label:String,action:()->Unit) {
+            val item=row().apply {
+                setPadding(dp(10),dp(8),dp(8),dp(8))
+                background=bg(0xD82C1A40.toInt(),0xFF5C3379.toInt())
+                setOnClickListener { action() }
+            }
+            item.addView(txt(label,14f),LinearLayout.LayoutParams(0,-2,1f))
+            item.addView(txt("❯",23f).apply {
+                gravity=Gravity.CENTER
+                setTextColor(0xFFDDC1FF.toInt())
+            },LinearLayout.LayoutParams(dp(34),dp(43)))
+            container.addView(item,LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(9)})
+        }
+        category("Configurações Básicas"){openSettingsPage(0)}
+        category("Configurações do Monitor de Informações do Dispositivo"){openSettingsPage(1)}
+        category("Configurações Gerais de Controle de Recuo"){openSettingsPage(2)}
+        category("Configurações da mira"){openSettingsPage(3)}
+        category("Configurações da ferramenta de ajuste de tamanho de tela"){openSettingsPage(4)}
+        container.addView(txt("Alguns controles são apenas configurações do perfil, pois o motor de mouse relativo e a compensação de recuo ainda não estão implementados.",11f).apply {
+            setTextColor(0xFFD4B9E8.toInt())
+        },LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(14)})
+        scroll.addView(container)
+        val sz=size()
+        root.addView(scroll,FrameLayout.LayoutParams(
+            min(sz.x-dp(18),dp(600)),min(sz.y-dp(24),dp(670)),Gravity.CENTER))
+    }
+
+    private fun toggle(box:LinearLayout,label:String,checked:Boolean,changed:(Boolean)->Unit) {
+        val r=row().apply { setPadding(0,dp(8),0,dp(8)) }
+        r.addView(txt(label,13f),LinearLayout.LayoutParams(0,-2,1f))
+        val sw=Switch(this).apply {
+            isChecked=checked
+            thumbTintList=ColorStateList.valueOf(0xFFD3A7FF.toInt())
+            setOnCheckedChangeListener { _,value -> changed(value);save() }
+        }
+        r.addView(sw)
+        box.addView(r)
+    }
+    private fun openSettingsPage(which:Int) {
+        val root=fullScreen(false)
+        val titles=arrayOf(
+            "Configurações Básicas",
+            "Monitor de Informações do Dispositivo",
+            "Controle de Recuo",
+            "Configurações da mira",
+            "Ajuste de tamanho de tela"
+        )
+        val scroll=ScrollView(this)
         val box=col().apply {
-            background=bg(0xFA1D1429.toInt(),0xFFB57AFF.toInt())
-            setPadding(dp(16),dp(14),dp(16),dp(14))
+            background=bg(0xF21B1228.toInt(),0xFFAD73F1.toInt())
+            setPadding(dp(15),dp(13),dp(15),dp(16))
         }
-        box.addView(txt("Configurações · Referência",19f))
-        box.addView(txt("Mira e movimento",15f),LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(12)})
-        seek(box,"Sensibilidade horizontal (X)",profile.sensitivityX,1,1000){
-            profile.sensitivityX=it
-        }
-        seek(box,"Sensibilidade vertical (Y)",profile.sensitivityY,1,1000){
-            profile.sensitivityY=it
-        }
-        seek(box,"Aceleração (%)",profile.aimAcceleration,0,100){profile.aimAcceleration=it}
-        seek(box,"Suavização (%)",profile.aimSmoothing,0,100){profile.aimSmoothing=it}
-        box.addView(btn("Preset estilo MSI 5.9"){
-            profile.sensitivityX=350;profile.sensitivityY=350
-            profile.aimAcceleration=0;profile.aimSmoothing=10
-            profile.msiStyle=true;save();openSettings()
-        },LinearLayout.LayoutParams(-1,dp(42)).apply{topMargin=dp(7)})
-        box.addView(txt("Ajustes salvos para uso futuro pelo motor de mira; mouse relativo ainda não está implementado.",11f))
-        box.addView(txt("Cursor personalizado (.cur)",15f),LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(16)})
-        val filename=cursors.filename(game)
-        box.addView(txt(if(filename.isNullOrBlank()) "Nenhum arquivo selecionado. Use Cursor do mouse na tela inicial."
-            else "Arquivo selecionado: "+filename,11f))
-        val decoded=cursors.load(game)
-        if(decoded!=null) {
-            val preview=ImageView(this).apply {
-                setImageBitmap(decoded.bitmap)
-                scaleType=ImageView.ScaleType.FIT_CENTER
-                setBackgroundColor(0x442E1A42)
+        val head=row()
+        head.addView(txt(titles[which],17f),LinearLayout.LayoutParams(0,-2,1f))
+        head.addView(btn("✕"){closePanel()},LinearLayout.LayoutParams(dp(48),dp(42)))
+        box.addView(head)
+        when(which) {
+            0 -> {
+                box.addView(txt("Perfil do jogo • Teclado e botão flutuante",12f))
+                box.addView(btn("Atalho de digitação: "+KeyEvent.keyCodeToString(profile.shortcutKey).removePrefix("KEYCODE_")) {
+                    bindKey={ key -> profile.shortcutKey=key;save();openSettingsPage(0) }
+                    toast("Pressione uma tecla do teclado físico")
+                },LinearLayout.LayoutParams(-1,dp(42)).apply {topMargin=dp(12)})
+                box.addView(txt("Posição do botão flutuante",14f),
+                    LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(14)})
+                val corners=row()
+                listOf("↖","↗","↙","↘").forEachIndexed { index,label ->
+                    corners.addView(btn(label){
+                        store.saveCorner(index)
+                        toast("Novo canto aplicado ao fechar o menu")
+                    },LinearLayout.LayoutParams(0,dp(44),1f).apply {rightMargin=dp(4)})
+                }
+                box.addView(corners)
+                box.addView(txt("Cursor (.cur)",14f),
+                    LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(13)})
+                box.addView(txt(cursors.filename(game) ?: "Selecione o arquivo .cur na tela inicial",11f))
+                val cursor=cursors.load(game)
+                if(cursor!=null) {
+                    val image=ImageView(this).apply {
+                        setImageBitmap(cursor.bitmap)
+                        scaleType=ImageView.ScaleType.FIT_CENTER
+                    }
+                    box.addView(image,LinearLayout.LayoutParams(dp(56),dp(56)))
+                }
+                seek(box,"Tamanho da seta (.cur)",cursors.size(game),12,128){cursors.setSize(game,it)}
             }
-            val initial=dp(profile.cursorSize.coerceIn(12,128))
-            box.addView(preview,LinearLayout.LayoutParams(initial,initial).apply {topMargin=dp(7)})
-            seek(box,"Tamanho da seta",cursors.size(game),12,128) {
-                cursors.setSize(game,it)
-                val n=dp(it)
-                preview.layoutParams=LinearLayout.LayoutParams(n,n).apply {topMargin=dp(7)}
+            1 -> {
+                toggle(box,"Mostrar monitor durante o jogo",profile.showDeviceMonitor) {
+                    profile.showDeviceMonitor=it
+                    ensureMonitor()
+                }
+                val memory=ActivityManager.MemoryInfo()
+                try {
+                    (getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
+                    box.addView(txt(String.format(java.util.Locale.getDefault(),
+                        "Aparelho: %s  •  RAM disponível: %.2f GB / %.2f GB",
+                        Build.MODEL,memory.availMem/1_073_741_824.0,memory.totalMem/1_073_741_824.0),12f))
+                } catch (_:Exception) {
+                    box.addView(txt("Memória indisponível",12f))
+                }
+                box.addView(txt("O monitor exibe modelo e memória livre. FPS por aplicativo não pode ser medido com precisão por essa permissão.",11f))
             }
-        } else {
-            seek(box,"Tamanho da seta",cursors.size(game),12,128){
-                cursors.setSize(game,it)
+            2 -> {
+                toggle(box,"Preparar perfil de controle de recuo",profile.recoilControlEnabled) {
+                    profile.recoilControlEnabled=it
+                }
+                seek(box,"Intensidade de compensação (%)",profile.recoilStrength,0,100) {
+                    profile.recoilStrength=it
+                }
+                seek(box,"Suavização da compensação (%)",profile.recoilSmooth,0,100) {
+                    profile.recoilSmooth=it
+                }
+                box.addView(txt("Esses valores são armazenados, mas NÃO reduzem o recuo atualmente: o motor de compensação não está implementado.",11f).apply {
+                    setTextColor(0xFFFFC98B.toInt())
+                },LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(8)})
+            }
+            3 -> {
+                seek(box,"Sensibilidade Horizontal X",profile.sensitivityX,1,1000){
+                    profile.sensitivityX=it
+                }
+                seek(box,"Sensibilidade Vertical Y",profile.sensitivityY,1,1000){
+                    profile.sensitivityY=it
+                }
+                seek(box,"Aceleração",profile.aimAcceleration,0,100){
+                    profile.aimAcceleration=it
+                }
+                seek(box,"Suavização",profile.aimSmoothing,0,100){
+                    profile.aimSmoothing=it
+                }
+                box.addView(btn("Carregar preset estilo MSI 5.9"){
+                    profile.sensitivityX=350;profile.sensitivityY=350
+                    profile.aimAcceleration=0;profile.aimSmoothing=10
+                    profile.msiStyle=true
+                    save()
+                    openSettingsPage(3)
+                },LinearLayout.LayoutParams(-1,dp(43)).apply {topMargin=dp(10)})
+                box.addView(txt("O preset organiza os parâmetros no estilo do MSI. Não altera a mira até existir captura relativa do mouse.",11f),
+                    LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(8)})
+            }
+            4 -> {
+                seek(box,"Tamanho dos botões do HUD (%)",profile.hudScale,50,160){
+                    profile.hudScale=it
+                }
+                seek(box,"Tamanho do botão flutuante (dp)",profile.bubbleSize,40,82){
+                    profile.bubbleSize=it
+                }
+                box.addView(btn("Restaurar tamanho padrão"){
+                    profile.hudScale=100
+                    profile.bubbleSize=52
+                    save()
+                    openSettingsPage(4)
+                },LinearLayout.LayoutParams(-1,dp(43)).apply {topMargin=dp(9)})
+                box.addView(txt("Os novos tamanhos entram em vigor ao reabrir o editor ou o botão flutuante. Não modifica a resolução do jogo.",11f))
             }
         }
-        box.addView(txt("A prévia do .cur e o tamanho são salvos por jogo. A substituição do ponteiro nativo durante a partida depende do futuro motor de captura de mouse.",11f),
-            LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(9)})
-        box.addView(btn("Atalho de digitação: "+KeyEvent.keyCodeToString(profile.shortcutKey).removePrefix("KEYCODE_")){
-            bindKey={key->profile.shortcutKey=key;save();openSettings()}
-            toast("Pressione uma tecla física")
-        },LinearLayout.LayoutParams(-1,dp(43)).apply {topMargin=dp(9)})
+        box.addView(btn("‹ Voltar às Configurações"){save();openSettings()},
+            LinearLayout.LayoutParams(-1,dp(43)).apply {topMargin=dp(15)})
         box.addView(btn("Salvar e fechar"){save();closePanel()},
-            LinearLayout.LayoutParams(-1,dp(45)).apply {topMargin=dp(9)})
+            LinearLayout.LayoutParams(-1,dp(43)).apply {topMargin=dp(7)})
         scroll.addView(box)
         val sz=size()
-        root.addView(scroll,FrameLayout.LayoutParams(min(sz.x-dp(18),dp(490)),
-            min(sz.y-dp(28),dp(620)),Gravity.CENTER))
+        root.addView(scroll,FrameLayout.LayoutParams(
+            min(sz.x-dp(16),dp(575)),min(sz.y-dp(22),dp(670)),Gravity.CENTER))
     }
 }

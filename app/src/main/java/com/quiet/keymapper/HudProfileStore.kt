@@ -52,7 +52,13 @@ data class HudProfile(
     var reducedLatency: Boolean = true,
     var aimAcceleration: Int = 0,
     var aimSmoothing: Int = 0,
-    var msiStyle: Boolean = false
+    var msiStyle: Boolean = false,
+    var showDeviceMonitor: Boolean = false,
+    var recoilControlEnabled: Boolean = false,
+    var recoilStrength: Int = 25,
+    var recoilSmooth: Int = 50,
+    var hudScale: Int = 100,
+    var bubbleSize: Int = 52
 ) {
     fun toJson(): String = JSONObject().apply {
         put("controls", JSONArray().apply { controls.forEach { put(it.toJson()) } })
@@ -64,6 +70,12 @@ data class HudProfile(
         put("suspendEnabled", suspendEnabled); put("reducedLatency", reducedLatency)
         put("aimAcceleration", aimAcceleration); put("aimSmoothing", aimSmoothing)
         put("msiStyle", msiStyle)
+        put("showDeviceMonitor", showDeviceMonitor)
+        put("recoilControlEnabled", recoilControlEnabled)
+        put("recoilStrength", recoilStrength)
+        put("recoilSmooth", recoilSmooth)
+        put("hudScale", hudScale)
+        put("bubbleSize", bubbleSize)
     }.toString()
     companion object {
         fun read(raw: String): HudProfile {
@@ -87,6 +99,12 @@ data class HudProfile(
                 result.aimAcceleration = o.optInt("aimAcceleration", 0).coerceIn(0, 100)
                 result.aimSmoothing = o.optInt("aimSmoothing", 0).coerceIn(0, 100)
                 result.msiStyle = o.optBoolean("msiStyle", false)
+                result.showDeviceMonitor = o.optBoolean("showDeviceMonitor", false)
+                result.recoilControlEnabled = o.optBoolean("recoilControlEnabled", false)
+                result.recoilStrength = o.optInt("recoilStrength", 25).coerceIn(0, 100)
+                result.recoilSmooth = o.optInt("recoilSmooth", 50).coerceIn(0, 100)
+                result.hudScale = o.optInt("hudScale", 100).coerceIn(50, 160)
+                result.bubbleSize = o.optInt("bubbleSize", 52).coerceIn(40, 82)
                 result
             } catch (_: Exception) { HudProfile() }
         }
