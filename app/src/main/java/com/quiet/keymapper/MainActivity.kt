@@ -280,6 +280,9 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         settingsRow(content, "Apps em execução", "Gerenciamento de aplicativos") {
             showTab(2)
         }
+        settingsRow(content, "Restaurar resolução e DPI", "Recuperar a tela original com Shizuku, mesmo fora do jogo") {
+            DisplayRecoveryUi.show(this)
+        }
         settingsRow(content, "Diagnóstico HUD", "Consultar por que o botão aparece ou desaparece") {
             showHudDiagnostics()
         }
@@ -721,7 +724,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                     1 -> showTab(1)
                     2 -> showTab(2)
                     3 -> refreshGames()
-                    else -> info("Referência V11", "Correção de sessão do botão flutuante, diagnóstico do HUD e edição por jogo. Analógico contínuo e mouse-look ainda não estão implementados.")
+                    else -> info("Referência V12", "Correção de sessão do botão flutuante, diagnóstico do HUD e edição por jogo. Analógico contínuo e mouse-look ainda não estão implementados.")
                 }
             }.show()
     }

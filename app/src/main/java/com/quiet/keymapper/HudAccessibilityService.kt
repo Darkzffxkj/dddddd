@@ -77,6 +77,10 @@ class HudAccessibilityService : AccessibilityService() {
     private var lastGameWindowAt = 0L
     private var armedAt = 0L
     private val cursors by lazy { CursorFileStore(this) }
+    private var displayClient:DisplayTuningClient?=null
+    private fun displayTuning():DisplayTuningClient {
+        return displayClient ?: DisplayTuningClient(this).also { displayClient=it }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -258,6 +262,8 @@ class HudAccessibilityService : AccessibilityService() {
         alive=false
         cancelPendingExit()
         handler.removeCallbacks(keepHud)
+        displayClient?.close()
+        displayClient=null
         try { unregisterReceiver(screenOffReceiver) } catch (_:Exception) {}
         cancelAllPresses()
         closeAll()
@@ -668,6 +674,140 @@ class HudAccessibilityService : AccessibilityService() {
         r.addView(sw)
         box.addView(r)
     }
+    private fun createDisplaySettings(box:LinearLayout) {
+        box.addView(txt("Resolução e densidade • estilo SecondScreen",15f),
+            LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(17)})
+        val notice=txt("Altera a resolução e a escala da TELA INTEIRA do Android, não apenas do jogo. " +
+            "Pode deslocar controles e reduzir a legibilidade. Shizuku autorizado é obrigatório.",11f)
+        notice.setTextColor(0xFFFFD0A2.toInt())
+        box.addView(notice,LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(7)})
+        val status=txt("Conectando ao Shizuku...",12f)
+        box.addView(status,LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(10)})
+        val choices=col()
+        box.addView(choices)
+        val client=displayTuning()
+
+        fun render(d:DisplayState) {
+            if(!box.isAttachedToWindow) return
+            choices.removeAllViews()
+            status.text="Atual: "+d.activeW+" × "+d.activeH+" px • "+d.activeDpi+
+                " DPI\nFísico: "+d.physicalW+" × "+d.physicalH+" px • "+d.physicalDpi+" DPI"+
+                if(d.pending)"\nTeste ativo: confirme antes de 45 segundos." else ""
+            val minimum=max(60,
+                max((32000+d.physicalW-1)/d.physicalW,
+                    (48000+d.physicalH-1)/d.physicalH)).coerceAtMost(100)
+            var resolutionPercent=(d.activeW*100/d.physicalW).coerceIn(minimum,100)
+            val minDpi=max(160,(d.physicalDpi*.75).toInt())
+            val maxDpi=min(640,(d.physicalDpi*1.25).toInt()).coerceAtLeast(minDpi)
+            var selectedDpi=d.activeDpi.coerceIn(minDpi,maxDpi)
+            val preview=txt("",12f)
+            preview.setTextColor(0xFFE7CBFF.toInt())
+            fun candidate():Pair<Int,Int> {
+                val scale=resolutionPercent/100.0
+                val w=(d.physicalW*scale).toInt()
+                val h=(d.physicalH*scale).toInt()
+                return w to h
+            }
+            fun updatePreview() {
+                val target=candidate()
+                preview.text="Prévia: "+target.first+" × "+target.second+
+                    " px / "+selectedDpi+" DPI"
+            }
+            seek(choices,"Escala da resolução (%)",resolutionPercent,minimum,100) {
+                resolutionPercent=it
+                updatePreview()
+            }
+            seek(choices,"Densidade (DPI)",selectedDpi,minDpi,maxDpi) {
+                selectedDpi=it
+                updatePreview()
+            }
+            choices.addView(preview)
+            updatePreview()
+            choices.addView(txt(
+                "Resolução proporcional para preservar o formato da tela. " +
+                "Valores limitados a 60–100% da resolução física e 75–125% do DPI original.",
+                11f
+            ),LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(6)})
+
+            if(d.pending) {
+                choices.addView(btn("Confirmar e manter resolução"){
+                    status.text="Confirmando..."
+                    client.confirm { code ->
+                        if(code==0) {
+                            toast("Configuração confirmada")
+                            client.query { fresh,error ->
+                                if(fresh!=null) render(fresh)
+                                else status.text="Não foi possível ler o estado: "+error
+                            }
+                        } else status.text="Falha ao confirmar: "+code+
+                            ". Aguarde o retorno automático."
+                    }
+                },LinearLayout.LayoutParams(-1,dp(47)).apply {topMargin=dp(11)})
+            } else {
+                choices.addView(btn("Testar resolução e DPI por 45 segundos"){
+                    val target=candidate()
+                    status.text="Aplicando configuração temporária..."
+                    client.apply(target.first,target.second,selectedDpi) { code ->
+                        if(code==0) {
+                            toast("Teste aplicado. Confirme antes do retorno automático.")
+                            client.query { fresh,error ->
+                                if(fresh!=null) render(fresh)
+                                else status.text="Aplicado, consulta indisponível: "+error
+                            }
+                        } else {
+                            status.text="Não foi possível aplicar (código "+code+
+                                "). Confira o Shizuku e os limites de segurança."
+                        }
+                    }
+                },LinearLayout.LayoutParams(-1,dp(47)).apply {topMargin=dp(11)})
+            }
+            var resetArmed=false
+            val reset=btn("Restaurar resolução e DPI originais"){
+                if(!resetArmed) {
+                    resetArmed=true
+                    status.text="Confirme tocando em Restaurar novamente. "+
+                        "Isso remove todas as substituições de resolução e DPI."
+                } else {
+                    status.text="Restaurando padrão..."
+                    client.reset { code ->
+                        if(code==0) {
+                            resetArmed=false
+                            toast("Tela restaurada")
+                            client.query { fresh,error ->
+                                if(fresh!=null) render(fresh)
+                                else status.text="Restauração enviada; consulta: "+error
+                            }
+                        } else status.text="Falha na restauração: "+code
+                    }
+                }
+            }
+            choices.addView(reset,LinearLayout.LayoutParams(-1,dp(47)).apply {topMargin=dp(7)})
+            choices.addView(btn("Copiar comandos de recuperação"){
+                val clip=getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clip.setPrimaryClip(android.content.ClipData.newPlainText(
+                    "Restauração de tela","wm size reset\nwm density reset"
+                ))
+                toast("Comandos de recuperação copiados")
+            },LinearLayout.LayoutParams(-1,dp(44)).apply {topMargin=dp(7)})
+            choices.addView(txt("Proteção: sem confirmação, o serviço tenta restaurar os valores " +
+                "anteriores após 45 segundos. Se o processo privilegiado for encerrado, essa " +
+                "recuperação não é garantida. Use ADB para restaurar caso necessário.",11f),
+                LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(8)})
+        }
+
+        client.connect { ok ->
+            if(!box.isAttachedToWindow) return@connect
+            if(!ok) {
+                status.text="Shizuku indisponível ou sem permissão. "+
+                    "Abra Referência > Ativação e autorize."
+            } else client.query { d,error ->
+                if(!box.isAttachedToWindow) return@query
+                if(d!=null) render(d)
+                else status.text="Erro ao ler resolução: "+error
+            }
+        }
+    }
+
     private fun openSettingsPage(which:Int) {
         val root=fullScreen(false)
         val titles=arrayOf(
@@ -782,7 +922,8 @@ class HudAccessibilityService : AccessibilityService() {
                     save()
                     openSettingsPage(4)
                 },LinearLayout.LayoutParams(-1,dp(43)).apply {topMargin=dp(9)})
-                box.addView(txt("Os novos tamanhos entram em vigor ao reabrir o editor ou o botão flutuante. Não modifica a resolução do jogo.",11f))
+                box.addView(txt("Os novos tamanhos entram em vigor ao reabrir o editor ou o botão flutuante.",11f))
+                createDisplaySettings(box)
             }
         }
         box.addView(btn("‹ Voltar às Configurações"){save();openSettings()},

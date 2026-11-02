@@ -10,8 +10,8 @@ android {
         applicationId = "com.quiet.keymapper"
         minSdk = 29
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.11.0"
+        versionCode = 12
+        versionName = "0.12.0"
     }
     packaging {
         resources {

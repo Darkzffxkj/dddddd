@@ -2,7 +2,7 @@ name: Compilar APK Android
 on:
   workflow_dispatch:
   push:
-    branches: [keymapper-v2-build, keymapper-v4-optimizer, keymapper-v5-hibernator, referencia-v6-ui, referencia-v7-hud, referencia-v8-overlay-cursor, referencia-v9-game-controls, referencia-v10-overlay-settings, referencia-v11-overlay-session]
+    branches: [keymapper-v2-build, keymapper-v4-optimizer, keymapper-v5-hibernator, referencia-v6-ui, referencia-v7-hud, referencia-v8-overlay-cursor, referencia-v9-game-controls, referencia-v10-overlay-settings, referencia-v11-overlay-session, referencia-v12-display]
 permissions:
   contents: write
 jobs:
@@ -42,27 +42,28 @@ jobs:
       - name: Disponibilizar APK para download
         uses: actions/upload-artifact@v4
         with:
-          name: Referencia-V11-Overlay-Fix-debug-APK
+          name: Referencia-V12-Display-debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
 
       - name: Publicar link direto do APK na aba Releases
-        if: github.ref == 'refs/heads/referencia-v11-overlay-session'
+        if: github.ref == 'refs/heads/referencia-v12-display'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -e
-          TAG="referencia-v11"
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          TAG="referencia-v12"
+          cp app/build/outputs/apk/debug/app-debug.apk Referencia-V12.apk
+          APK="Referencia-V12.apk"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK#Referencia-V11.apk" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" "$APK#Referencia-V11.apk" \
+            gh release create "$TAG" "$APK" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "Referência V11 — correção do botão flutuante" \
-              --notes "Android 10+. APK de teste; botão flutuante com correção de ciclo de vida e opção Diagnóstico HUD." \
+              --title "Referência V12 — Resolução e DPI" \
+              --notes "Android 10+. Ajustes de resolução e DPI via Shizuku com confirmação e restauração. Atenção: a alteração afeta toda a tela do Android." \
               --prerelease
           fi
