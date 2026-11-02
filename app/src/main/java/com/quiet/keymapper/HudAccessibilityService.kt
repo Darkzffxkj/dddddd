@@ -43,6 +43,18 @@ class HudAccessibilityService : AccessibilityService() {
     private var bindKey: ((Int) -> Unit)? = null
     private var consumedBindingUp = -1
     private val held = mutableSetOf<Int>()
+    private val pendingPresses = mutableMapOf<Int, Runnable>()
+    private var alive = false
+    private val keepHud = object:Runnable {
+        override fun run() {
+            if(!alive) return
+            if(game.isNotEmpty() && foreground == game && !editing && panel == null) {
+                if(bubble != null && bubble?.isAttachedToWindow == false) bubble=null
+                if(bubble == null) showBubble()
+            }
+            handler.postDelayed(this, 2200L)
+        }
+    }
     private var windowGeneration = 0
     private var transientWindow = false
     private var seenGameOnce = false
@@ -51,6 +63,8 @@ class HudAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         current = this
+        alive=true
+        handler.postDelayed(keepHud,2200L)
         serviceInfo = serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         }
@@ -79,87 +93,109 @@ class HudAccessibilityService : AccessibilityService() {
             if (foreground == game) showBubble()
         }
     }
-    override fun onAccessibilityEvent(e: AccessibilityEvent?) {
-        val type = e?.eventType ?: return
-        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            type != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
-        val value = e.packageName?.toString() ?: return
-        if (value.isBlank() || value == packageName || game.isBlank()) return
-        if (value == game) {
+    override fun onAccessibilityEvent(e:AccessibilityEvent?) {
+        val t=e?.eventType ?: return
+        if(t!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            t!=AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
+        val incoming=e.packageName?.toString().orEmpty()
+        if(incoming.isBlank() || incoming==packageName || game.isBlank()) return
+        if(incoming==game) {
+            foreground=game
+            seenGameOnce=true
             windowGeneration++
-            transientWindow = false
-            foreground = game
-            seenGameOnce = true
-            if (!editing && bubble == null) showBubble()
+            transientWindow=false
+            if(!editing && bubble==null) showBubble()
             return
         }
-        // Android sends transient windows for loading screens, IMEs, permission sheets and
-        // overlays. TYPE_WINDOWS_CHANGED from another package does not prove the game exited.
-        if (!seenGameOnce || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
-        // Game Booster, keyboard, notification and Android permission layers can raise
-        // windows without taking the game away from the player.
-        val systemTransient = value == "com.android.systemui" ||
-            value == "android" || value == "com.google.android.gms" ||
-            value.contains("permissioncontroller") ||
-            value.contains("inputmethod") || value.contains("keyboard") ||
-            value.startsWith("com.samsung.android.game.")
-        if (systemTransient) return
-        if (transientWindow) return
-        transientWindow = true
-        val generation = ++windowGeneration
-        // Hide only after a stable 8-second absence of the game. On a new game window
-        // event, this callback becomes obsolete; thus the HUD survives startup transitions.
-        handler.postDelayed({
-            if (generation == windowGeneration && transientWindow && seenGameOnce) {
-                foreground = ""
-                transientWindow = false
-                closeAll()
-            }
-        }, 8000L)
+        // The game's loading screen, Android keyboard, permission sheets and game
+        // booster may use other packages. They do not justify removing the HUD.
+        // Only a stable transition to the HOME launcher hides it.
+        if(!seenGameOnce || t!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val home=try {
+            @Suppress("DEPRECATION")
+            packageManager.resolveActivity(android.content.Intent(android.content.Intent.ACTION_MAIN)
+                .addCategory(android.content.Intent.CATEGORY_HOME),0)?.activityInfo?.packageName
+        } catch (_:Exception) { null }
+        if(incoming==home) {
+            val generation=++windowGeneration
+            handler.postDelayed({
+                if(windowGeneration==generation && foreground==game) {
+                    foreground=""
+                    cancelAllPresses()
+                    closeAll()
+                }
+            },15000L)
+        }
     }
     override fun onInterrupt() {}
     override fun onDestroy() {
+        alive=false
+        handler.removeCallbacks(keepHud)
+        cancelAllPresses()
         closeAll()
         if (current === this) current = null
         super.onDestroy()
     }
-    override fun onKeyEvent(e: KeyEvent): Boolean {
-        if (game.isEmpty() || foreground != game || transientWindow) return false
-        // Consume both halves of a rebinding key event; never leak just KEY_UP to the game.
-        if (e.action == KeyEvent.ACTION_UP && e.keyCode == consumedBindingUp) {
-            consumedBindingUp = -1
+    private fun cancelAllPresses() {
+        held.clear()
+        pendingPresses.values.forEach { handler.removeCallbacks(it) }
+        pendingPresses.clear()
+    }
+    override fun onKeyEvent(e:KeyEvent):Boolean {
+        if(game.isBlank() || foreground!=game) return false
+        if(e.action==KeyEvent.ACTION_UP && e.keyCode==consumedBindingUp) {
+            consumedBindingUp=-1
             return true
         }
-        if (bindKey != null && e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) {
-            consumedBindingUp = e.keyCode
-            val callback = bindKey
-            bindKey = null
-            callback?.invoke(e.keyCode)
+        if(bindKey!=null && e.action==KeyEvent.ACTION_DOWN && e.repeatCount==0) {
+            consumedBindingUp=e.keyCode
+            val fn=bindKey; bindKey=null
+            fn?.invoke(e.keyCode)
             return true
         }
-        if (editing) return false
-        if (e.keyCode == profile.shortcutKey) {
-            if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) {
-                typing = !typing
-                toast(if (typing) "Modo de digitação" else "Modo de controle")
+        if(editing) return false
+        if(e.keyCode==profile.shortcutKey) {
+            if(e.action==KeyEvent.ACTION_DOWN && e.repeatCount==0) {
+                typing=!typing
+                if(typing) cancelAllPresses()
+                toast(if(typing) "Modo digitação" else "Modo controle")
             }
             return true
         }
-        val pause = profile.controls.firstOrNull { it.kind == "SUSPEND" && it.keyCode == e.keyCode }
-        if (pause != null) {
-            if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) {
-                suspended = !suspended
-                toast(if (suspended) "Controles suspensos" else "Controles retomados")
+        val suspend=profile.controls.firstOrNull {
+            it.kind=="SUSPEND" && it.keyCode==e.keyCode
+        }
+        if(suspend!=null) {
+            if(e.action==KeyEvent.ACTION_DOWN && e.repeatCount==0) {
+                suspended=!suspended
+                if(suspended) cancelAllPresses()
+                toast(if(suspended) "Controles suspensos" else "Controles retomados")
             }
             return true
         }
-        if (typing || suspended) return false
-        val c = profile.controls.firstOrNull { it.kind == "TOUCH" && it.keyCode == e.keyCode }
-        if (c != null) {
-            if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) tap(c.x,c.y)
-            return true
+        if(typing || suspended) return false
+        val mapped=profile.controls.firstOrNull {
+            (it.kind=="TOUCH" || it.kind=="FIRE") && it.keyCode==e.keyCode
+        } ?: return false
+        val code=e.keyCode
+        if(e.action==KeyEvent.ACTION_DOWN && e.repeatCount==0) {
+            if(held.add(code)) {
+                val command=object:Runnable {
+                    override fun run() {
+                        if(code !in held || foreground!=game || typing || suspended || editing) return
+                        tap(mapped.x,mapped.y)
+                        if(mapped.kind=="FIRE")
+                            handler.postDelayed(this,mapped.repeatMs.coerceIn(50,500).toLong())
+                    }
+                }
+                pendingPresses[code]=command
+                handler.postDelayed(command,mapped.delayMs.coerceIn(0,300).toLong())
+            }
+        } else if(e.action==KeyEvent.ACTION_UP) {
+            held.remove(code)
+            pendingPresses.remove(code)?.let { handler.removeCallbacks(it) }
         }
-        return false
+        return true
     }
     private fun size():Point = Point().also {
         @Suppress("DEPRECATION")
@@ -206,7 +242,7 @@ class HudAccessibilityService : AccessibilityService() {
     private fun closePanel(){remove(panel);panel=null;editing=false;bindKey=null;showBubble()}
     private fun closeAll(){
         remove(menu);menu=null;remove(panel);panel=null;remove(bubble);bubble=null
-        editing=false;bindKey=null;held.clear()
+        editing=false;bindKey=null;cancelAllPresses()
     }
     private fun save(){ if(game.isNotEmpty()) store.save(game,profile) }
     private fun cornerPosition(p:WindowManager.LayoutParams,c:Int) {
@@ -294,6 +330,7 @@ class HudAccessibilityService : AccessibilityService() {
             line.addView(btn(s,fn),LinearLayout.LayoutParams(-2,dp(42)).apply{rightMargin=dp(5)})
         }
         tool("⊙ Tocar"){newControl("TOUCH")}
+        tool("◉ Atirar"){newControl("FIRE")}
         tool("◎ Analógico"){newControl("JOYSTICK")}
         tool("⌖ Suspender + Sensi"){newControl("SUSPEND")}
         tool("Salvar"){save();closePanel();toast("Perfil do jogo salvo")}
@@ -307,13 +344,20 @@ class HudAccessibilityService : AccessibilityService() {
     private fun newControl(kind:String){
         if(profile.controls.size>=90){toast("Limite de controles");return}
         val c=HudControl(kind,
-            if(kind=="SUSPEND")KeyEvent.KEYCODE_F9 else KeyEvent.KEYCODE_SPACE,.5f,.49f)
+            when(kind) { "SUSPEND"->KeyEvent.KEYCODE_F9;"FIRE"->KeyEvent.KEYCODE_F;else->KeyEvent.KEYCODE_SPACE },.5f,.49f)
         profile.controls.add(c);save();openEditor();openControlSettings(c)
     }
     private fun makeMarker(root:FrameLayout,c:HudControl){
         val sz=size()
         val side=dp(if(c.kind=="JOYSTICK") 108 else 74)
-        val v=HudMarkerView(this,c)
+        val v=FrameLayout(this)
+        v.addView(HudMarkerView(this,c),FrameLayout.LayoutParams(-1,-1))
+        val gear=txt("⚙",21f).apply {
+            gravity=Gravity.CENTER
+            background=bg(0xEE24152D.toInt(),0xFFC5A0FF.toInt())
+            setOnClickListener { openControlSettings(c) }
+        }
+        v.addView(gear,FrameLayout.LayoutParams(dp(28),dp(28),Gravity.TOP or Gravity.RIGHT))
         val params=FrameLayout.LayoutParams(side,side).apply {
             leftMargin=(c.x*sz.x-side/2).toInt().coerceIn(0,max(0,sz.x-side))
             topMargin=(c.y*sz.y-side/2).toInt().coerceIn(dp(54),max(dp(54),sz.y-side-dp(43)))
@@ -373,19 +417,34 @@ class HudAccessibilityService : AccessibilityService() {
             background=bg(0xFA1D1429.toInt(),0xFFBD88FF.toInt())
         }
         box.addView(txt(when(c.kind){"JOYSTICK"->"Analógico / WASD"
-            "SUSPEND"->"Suspender + Sensi";else->"Tocar / Tecla"},17f))
+            "SUSPEND"->"Suspender + Sensi";"FIRE"->"◉ Atirar";else->"Tocar / Tecla"},17f))
         box.addView(btn("Vincular: "+KeyEvent.keyCodeToString(c.keyCode).removePrefix("KEYCODE_")){
             bindKey={key->c.keyCode=key;save();openControlSettings(c)}
             toast("Pressione a tecla física")
         },LinearLayout.LayoutParams(-1,dp(44)).apply{topMargin=dp(9)})
+        if(c.kind=="TOUCH" || c.kind=="FIRE") {
+            seek(box,"Delay para ativar (ms)",c.delayMs,0,300){ c.delayMs=it;save() }
+            if(c.kind=="FIRE") {
+                seek(box,"Intervalo entre disparos (ms)",c.repeatMs,50,500){ c.repeatMs=it;save() }
+                box.addView(txt("Enquanto segurar a tecla, o Android enviará toques repetidos. Não é um toque contínuo.",11f))
+            }
+        }
         if(c.kind=="JOYSTICK"){
             seek(box,"Raio do analógico",(c.radius*1000).toInt(),20,300){c.radius=it/1000f}
             seek(box,"Caminhar devagar / Shift (%)",(c.slowRatio*100).toInt(),5,100){c.slowRatio=it/100f}
             box.addView(txt("WASD e Shift: perfil salvo; movimento contínuo requer motor multitouch.",11f))
         }
         if(c.kind=="SUSPEND"){
-            seek(box,"Sensibilidade X",profile.sensitivityX,1,1000){profile.sensitivityX=it}
-            seek(box,"Sensibilidade Y",profile.sensitivityY,1,1000){profile.sensitivityY=it}
+            box.addView(btn("Preset estilo MSI App Player 5.9"){
+                profile.sensitivityX=350;profile.sensitivityY=350
+                profile.aimAcceleration=0;profile.aimSmoothing=10
+                profile.msiStyle=true;save();openControlSettings(c)
+            },LinearLayout.LayoutParams(-1,dp(42)).apply{topMargin=dp(8)})
+            seek(box,"Sensi X",profile.sensitivityX,1,1000){profile.sensitivityX=it;save()}
+            seek(box,"Sensi Y",profile.sensitivityY,1,1000){profile.sensitivityY=it;save()}
+            seek(box,"Aceleração (%)",profile.aimAcceleration,0,100){profile.aimAcceleration=it;save()}
+            seek(box,"Suavização (%)",profile.aimSmoothing,0,100){profile.aimSmoothing=it;save()}
+            box.addView(txt("Escala inspirada no MSI 5.9: não reproduz o motor de mouse do emulador.",11f))
         }
         box.addView(btn("Concluído"){root.removeView(box);save()},
             LinearLayout.LayoutParams(-1,dp(42)).apply{topMargin=dp(9)})
@@ -406,6 +465,14 @@ class HudAccessibilityService : AccessibilityService() {
         seek(box,"Sensibilidade vertical (Y)",profile.sensitivityY,1,1000){
             profile.sensitivityY=it
         }
+        seek(box,"Aceleração (%)",profile.aimAcceleration,0,100){profile.aimAcceleration=it}
+        seek(box,"Suavização (%)",profile.aimSmoothing,0,100){profile.aimSmoothing=it}
+        box.addView(btn("Preset estilo MSI 5.9"){
+            profile.sensitivityX=350;profile.sensitivityY=350
+            profile.aimAcceleration=0;profile.aimSmoothing=10
+            profile.msiStyle=true;save();openSettings()
+        },LinearLayout.LayoutParams(-1,dp(42)).apply{topMargin=dp(7)})
+        box.addView(txt("Ajustes salvos para uso futuro pelo motor de mira; mouse relativo ainda não está implementado.",11f))
         box.addView(txt("Cursor personalizado (.cur)",15f),LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(16)})
         val filename=cursors.filename(game)
         box.addView(txt(if(filename.isNullOrBlank()) "Nenhum arquivo selecionado. Use Cursor do mouse na tela inicial."
