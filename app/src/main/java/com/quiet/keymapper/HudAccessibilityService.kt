@@ -6,6 +6,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.app.ActivityManager
 import android.os.Build
+import android.os.SystemClock
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.BroadcastReceiver
@@ -72,6 +73,9 @@ class HudAccessibilityService : AccessibilityService() {
     private var windowGeneration = 0
     private var transientWindow = false
     private var seenGameOnce = false
+    private var firstGameWindowAt = 0L
+    private var lastGameWindowAt = 0L
+    private var armedAt = 0L
     private val cursors by lazy { CursorFileStore(this) }
 
     override fun onServiceConnected() {
@@ -89,24 +93,49 @@ class HudAccessibilityService : AccessibilityService() {
         if (!previous.isNullOrBlank()) {
             game = previous
             profile = store.load(game)
-        }
+            armedAt = SystemClock.uptimeMillis()
+            diagnostic("SERVICE_RESTORED " + game)
+        } else diagnostic("SERVICE_CONNECTED")
+
     }
     fun prepareGame(packageName: String) {
         handler.post {
-            if (game != packageName) {
-                closeAll()
-                game = packageName
-                profile = store.load(game)
-                typing = false
-                suspended = false
-                seenGameOnce = false
-                transientWindow = false
-                windowGeneration++
-            }
+            // Opening the same game again is a NEW session. Keep this before
+            // startActivity(): stale transitions from our launcher must not end it.
+            cancelPendingExit()
+            closeAll()
+            game=packageName
+            foreground=""
+            profile=store.load(game)
+            typing=false
+            suspended=false
+            seenGameOnce=false
+            transientWindow=false
+            firstGameWindowAt=0L
+            lastGameWindowAt=0L
+            armedAt=SystemClock.uptimeMillis()
+            windowGeneration++
             getSharedPreferences("referencia_hud_profiles_v7",Context.MODE_PRIVATE)
                 .edit().putString("active_game",packageName).apply()
-            if (foreground == game) { showBubble(); ensureMonitor() }
+            diagnostic("ARMED " + packageName)
+            // Do not show a bubble on the launcher. First wait for the game's
+            // TYPE_WINDOW_STATE_CHANGED / TYPE_WINDOWS_CHANGED event.
         }
+    }
+    fun onMainAppForeground() {
+        // Called only when MainActivity is RESUMED, not at game launch.
+        if(game.isNotBlank() && seenGameOnce) leaveGame("RETURNED_TO_MAPPER")
+    }
+    private fun diagnostic(message:String) {
+        try {
+            val pref=getSharedPreferences("referencia_overlay_diagnostics",Context.MODE_PRIVATE)
+            val stamp=java.text.SimpleDateFormat("HH:mm:ss",java.util.Locale.getDefault())
+                .format(java.util.Date())
+            val existing=pref.getString("events","").orEmpty()
+            val updated=(existing.lines().filter { it.isNotBlank() }.takeLast(18)+
+                ("$stamp  "+message)).joinToString("\n")
+            pref.edit().putString("events",updated).apply()
+        } catch (_:Exception) {}
     }
     /** The current game's window is the only source of permission to show our overlay.
      * A non-game foreground activity schedules removal. System transient windows,
@@ -118,41 +147,78 @@ class HudAccessibilityService : AccessibilityService() {
             type!=AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
         val incoming=e.packageName?.toString().orEmpty()
         if(incoming.isBlank() || game.isBlank()) return
+
         if(incoming==game) {
             cancelPendingExit()
             foreground=game
+            val now=SystemClock.uptimeMillis()
+            if(!seenGameOnce) {
+                firstGameWindowAt=now
+                diagnostic("GAME_VISIBLE " + game)
+            }
+            lastGameWindowAt=now
             seenGameOnce=true
             transientWindow=false
             if(!editing && bubble==null) showBubble()
             ensureMonitor()
             return
         }
-        if(type!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || !seenGameOnce) return
-        // The app's MainActivity is a definite game exit; accessibility overlays
-        // may generate events from this package but never masquerade as MainActivity.
+
+        // While we launch a game, the launcher, Google Play splash, and login
+        // activities may emit events. None of them can cancel the ARMED state.
+        if(!seenGameOnce || type!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+
+        val cls=e.className?.toString().orEmpty()
         if(incoming==packageName) {
-            val cls=e.className?.toString().orEmpty()
-            if(cls.contains("MainActivity")) leaveGame()
+            // Explicitly returning to the Referência app is an exit. Events
+            // from our AccessibilityService overlays are not MainActivity.
+            if(cls.contains("MainActivity")) {
+                diagnostic("EXIT_MAPPER_WINDOW")
+                scheduleExit("MAPPER",800L)
+            }
             return
         }
+
         val home=try {
             @Suppress("DEPRECATION")
             packageManager.resolveActivity(Intent(Intent.ACTION_MAIN)
                 .addCategory(Intent.CATEGORY_HOME),0)?.activityInfo?.packageName
         } catch (_:Exception) { null }
-        if(incoming==home) {
-            scheduleExit(incoming,450L)
+        if(home!=null && incoming==home) {
+            diagnostic("EXIT_HOME_WINDOW")
+            scheduleExit("HOME",1200L)
             return
         }
+
+        // Exclude Android overlays, vendor game tools, notification sheets
+        // and the currently enabled input method. Those are not game exits.
+        val ime=try {
+            android.provider.Settings.Secure.getString(contentResolver,
+                android.provider.Settings.Secure.DEFAULT_INPUT_METHOD)
+                ?.substringBefore('/')
+        } catch (_:Exception) { null }
         val transient=incoming=="android" || incoming=="com.android.systemui" ||
-            incoming=="com.google.android.gms" || incoming.contains("permissioncontroller") ||
-            incoming.contains("inputmethod") || incoming.contains("keyboard") ||
+            incoming=="com.google.android.gms" || incoming==ime ||
+            incoming.contains("permissioncontroller",true) ||
+            incoming.contains("inputmethod",true) ||
+            incoming.contains("keyboard",true) ||
+            incoming.contains("honeyboard",true) ||
             incoming.contains("gamebooster",true) ||
             incoming.startsWith("com.samsung.android.game.")
         if(transient) return
-        // A genuine transition to another application is a game exit.
-        // Debounce briefly so a transient login/loading activity does not hide the HUD.
-        scheduleExit(incoming,1750L)
+
+        // During startup/loading, other package windows are not reliable
+        // evidence that Free Fire exited. Prevent the V10 false-positive.
+        val now=SystemClock.uptimeMillis()
+        if(firstGameWindowAt==0L || now-firstGameWindowAt<30_000L) return
+
+        // After startup, a stable unrelated app window with NO intervening
+        // game event can close the HUD. The delay gives games using external
+        // authentication/ads time to regain focus.
+        if(pendingExitPackage!=incoming) {
+            diagnostic("CHECK_OTHER " + incoming)
+            scheduleExit(incoming,8000L)
+        }
     }
     private fun cancelPendingExit() {
         pendingExit?.let(handler::removeCallbacks)
@@ -166,19 +232,23 @@ class HudAccessibilityService : AccessibilityService() {
         val pending=Runnable {
             pendingExit=null
             pendingExitPackage=null
-            if(game.isNotEmpty() && foreground==game) leaveGame()
+            if(game.isNotBlank() && foreground==game && seenGameOnce)
+                leaveGame("EXIT_CONFIRMED " + otherPackage)
         }
         pendingExit=pending
         handler.postDelayed(pending,delay)
     }
-    private fun leaveGame() {
+    private fun leaveGame(reason:String="EXIT_SCREEN_OFF") {
+        diagnostic(reason)
         cancelPendingExit()
         foreground=""
         seenGameOnce=false
         transientWindow=false
+        firstGameWindowAt=0L
+        lastGameWindowAt=0L
+        armedAt=0L
         cancelAllPresses()
         closeAll()
-        // Keep the per-game profile saved; only the active UI session is closed.
         game=""
         getSharedPreferences("referencia_hud_profiles_v7",Context.MODE_PRIVATE)
             .edit().remove("active_game").apply()
@@ -294,7 +364,10 @@ class HudAccessibilityService : AccessibilityService() {
             gravity=Gravity.TOP or Gravity.START
         }
     private fun add(v:View,p:WindowManager.LayoutParams):Boolean =
-        try { wm.addView(v,p);true } catch (_:Exception) { false }
+        try { wm.addView(v,p);true } catch (error:Exception) {
+            diagnostic("OVERLAY_ADD_FAILED "+error.javaClass.simpleName)
+            false
+        }
     private fun remove(v:View?) { if(v!=null)try { wm.removeView(v) }catch(_:Exception){} }
     private fun ensureMonitor() {
         if(game.isBlank() || foreground!=game || !profile.showDeviceMonitor) {
@@ -376,7 +449,10 @@ class HudAccessibilityService : AccessibilityService() {
                 else->false
             }
         }
-        if(add(v,params))bubble=v
+        if(add(v,params)) {
+            bubble=v
+            diagnostic("BUBBLE_VISIBLE "+game)
+        }
     }
     private fun toggleMenu(){
         if(menu!=null){closeMenu();return}

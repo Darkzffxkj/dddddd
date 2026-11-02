@@ -93,6 +93,10 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
     override fun onResume() {
         super.onResume()
+        // This activity is genuinely visible again; remove the in-game overlay.
+        // During the initial launch, the game has not been observed yet, so this
+        // never cancels the just-armed session.
+        HudAccessibilityService.current?.onMainAppForeground()
         if (::activationInfo.isInitialized) updateActivation()
         permissionsRefresh?.invoke()
     }
@@ -275,6 +279,9 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         settingsRow(content, "Terminal ADB", "Informações de ativação") { showTab(1) }
         settingsRow(content, "Apps em execução", "Gerenciamento de aplicativos") {
             showTab(2)
+        }
+        settingsRow(content, "Diagnóstico HUD", "Consultar por que o botão aparece ou desaparece") {
+            showHudDiagnostics()
         }
     }
 
@@ -714,11 +721,32 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                     1 -> showTab(1)
                     2 -> showTab(2)
                     3 -> refreshGames()
-                    else -> info("Referência V7", "Interface roxa, botão flutuante, editor HUD e perfis de toque por jogo. Analógico contínuo e mouse-look ainda em desenvolvimento.")
+                    else -> info("Referência V11", "Correção de sessão do botão flutuante, diagnóstico do HUD e edição por jogo. Analógico contínuo e mouse-look ainda não estão implementados.")
                 }
             }.show()
     }
 
+    private fun showHudDiagnostics() {
+        val preferences=getSharedPreferences("referencia_overlay_diagnostics",Context.MODE_PRIVATE)
+        val events=preferences.getString("events","").orEmpty()
+        val serviceActive=HudAccessibilityService.current!=null
+        val message="Serviço de acessibilidade: "+(if(serviceActive)"Conectado" else "Desconectado")+
+            "\n\nÚltimos eventos:\n"+events.ifBlank { "Ainda não há eventos gravados." }
+        AlertDialog.Builder(this)
+            .setTitle("Diagnóstico HUD")
+            .setMessage(message)
+            .setPositiveButton("Copiar diagnóstico") { _,_ ->
+                val clipboard=getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Diagnóstico Referência",message))
+                toast("Diagnóstico copiado")
+            }
+            .setNeutralButton("Limpar registro") { _,_ ->
+                preferences.edit().remove("events").apply()
+                toast("Registro apagado")
+            }
+            .setNegativeButton("Fechar",null)
+            .show()
+    }
     private fun info(title: String, message: String) {
         AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show()
     }
