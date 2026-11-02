@@ -638,7 +638,7 @@ class HudAccessibilityService : AccessibilityService() {
             tag="componentCatalog"
             isFillViewport=false
             isVerticalScrollBarEnabled=true
-            overScrollMode=View.OVER_SCROLL_IF_CONTENT_SCROLL
+            overScrollMode=View.OVER_SCROLL_IF_CONTENT_SCROLLS
             background=bg(0xF513122E.toInt(),0xFF6871FF.toInt())
         }
         val sheet=col().apply {setPadding(dp(13),dp(9),dp(13),dp(12))}
