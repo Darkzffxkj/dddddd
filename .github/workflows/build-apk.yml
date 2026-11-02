@@ -2,7 +2,7 @@ name: Compilar APK Android
 on:
   workflow_dispatch:
   push:
-    branches: [keymapper-v2-build, keymapper-v4-optimizer, keymapper-v5-hibernator, referencia-v6-ui, referencia-v7-hud, referencia-v8-overlay-cursor, referencia-v9-game-controls, referencia-v10-overlay-settings, referencia-v11-overlay-session, referencia-v14-display, referencia-v13-custom-display, referencia-v14-metallic-landscape]
+    branches: [keymapper-v2-build, keymapper-v4-optimizer, keymapper-v5-hibernator, referencia-v6-ui, referencia-v7-hud, referencia-v8-overlay-cursor, referencia-v9-game-controls, referencia-v10-overlay-settings, referencia-v11-overlay-session, referencia-v14-display, referencia-v13-custom-display, referencia-v14-metallic-landscape, referencia-v15-compact-library]
 permissions:
   contents: write
 jobs:
@@ -42,28 +42,28 @@ jobs:
       - name: Disponibilizar APK para download
         uses: actions/upload-artifact@v4
         with:
-          name: Referencia-V14-Metallic-Landscape-debug-APK
+          name: Referencia-V15-Compact-Library-debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
 
       - name: Publicar link direto do APK na aba Releases
-        if: github.ref == 'refs/heads/referencia-v14-metallic-landscape'
+        if: github.ref == 'refs/heads/referencia-v15-compact-library'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -e
-          TAG="referencia-v14"
-          cp app/build/outputs/apk/debug/app-debug.apk Referencia-V14.apk
-          APK="Referencia-V14.apk"
+          TAG="referencia-v15"
+          cp app/build/outputs/apk/debug/app-debug.apk Referencia-V15.apk
+          APK="Referencia-V15.apk"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$TAG" "$APK" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "Referência V14 — Metallic Landscape" \
-              --notes "Android 10+. Layout metálico roxo em paisagem, exclusão de controles no HUD e restauração automática de resolução/DPI ao minimizar/sair do jogo. Atenção: a alteração afeta toda a tela do Android." \
+              --title "Referência V15 — Biblioteca Compacta" \
+              --notes "Android 10+. Tela inicial compacta, biblioteca vazia até escolha do usuário, adição de qualquer aplicativo instalado, e navegação inferior. Atenção: a alteração afeta toda a tela do Android." \
               --prerelease
           fi

@@ -55,6 +55,12 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private lateinit var playTab: TextView
     private lateinit var activationTab: TextView
     private lateinit var optimizerTab: TextView
+    private lateinit var settingsTab: TextView
+    private lateinit var settingsPage: ScrollView
+    private lateinit var selectedGamesPanel: LinearLayout
+    private lateinit var emptyGamesPanel: LinearLayout
+    private lateinit var keyboardIndicator: TextView
+    private lateinit var mouseIndicator: TextView
     private lateinit var optimizerPanel: OptimizerPanel
     private lateinit var body: FrameLayout
     private lateinit var playPage: ScrollView
@@ -134,188 +140,244 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         handler.postDelayed(deviceRefresh, 180L)
     }
 
+
+    private fun metallicSurface(raised:Boolean=true):android.graphics.drawable.GradientDrawable =
+        android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+            if(raised) intArrayOf(
+                0xFF302342.toInt(),0xFF22172F.toInt(),
+                0xFF15111F.toInt(),0xFF241735.toInt()
+            ) else intArrayOf(
+                0xFF1E172A.toInt(),0xFF12101B.toInt(),0xFF22152F.toInt()
+            )
+        ).apply {
+            cornerRadius=dp(14).toFloat()
+            setStroke(dp(1),if(raised)0xFF886DA9.toInt() else 0xFF554266.toInt())
+        }
+
     private fun buildUi() {
-        window.statusBarColor = Palette.primaryDark
-        window.navigationBarColor = Palette.bg
-        val root = column().apply {
+        window.statusBarColor=0xFF0E0918.toInt()
+        window.navigationBarColor=0xFF0C0814.toInt()
+        val root=column().apply {
             background=android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
-                intArrayOf(0xFF090711.toInt(),0xFF181226.toInt(),
-                    0xFF130B21.toInt(),0xFF08070D.toInt())
+                intArrayOf(0xFF090810.toInt(),0xFF151024.toInt(),0xFF10091C.toInt(),
+                    0xFF080710.toInt())
             )
         }
         setContentView(root)
-
-        val landscape=resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE
-        val header = column().apply {
-            background = gradientHeader(this@MainActivity)
-            setPadding(dp(landscape.let { if(it)13 else 17 }),
-                dp(if(landscape)9 else 16),
-                dp(if(landscape)13 else 17),
-                dp(if(landscape)9 else 14))
+        val header=row().apply {
+            background=metallicSurface()
+            setPadding(dp(12),dp(7),dp(12),dp(7))
         }
-        val top = row()
-        val brand=ImageView(this).apply {
+        val logo=ImageView(this).apply {
             setImageResource(R.drawable.brand_logo)
             scaleType=ImageView.ScaleType.FIT_CENTER
             contentDescription="Referência"
         }
-        top.addView(brand,LinearLayout.LayoutParams(dp(48),dp(48)).apply { rightMargin=dp(10) })
-        val title = column().apply {
-            addView(txt("REFERÊNCIA", 21f, Palette.white, true))
-            addView(txt("M E T A L L I C  •  M A P P E R", 9f, 0xFFE6D8F8.toInt(), true),
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        header.addView(logo,LinearLayout.LayoutParams(dp(44),dp(44)).apply{rightMargin=dp(9)})
+        val brand=column()
+        brand.addView(txt("REFERÊNCIA",19f,Palette.white,true))
+        brand.addView(txt("M A P E A D O R   A N D R O I D",9f,Palette.violetSoft,true),
+            LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(3)})
+        activationChip=txt("VERIFICANDO",9f,Palette.warning,true)
+        brand.addView(activationChip,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(3)})
+        header.addView(brand,LinearLayout.LayoutParams(0,-2,1f))
+        keyboardIndicator=txt("⌨  Teclado  •  ...",11f,Palette.white,true).apply {
+            gravity=Gravity.CENTER
+            background=rounded(0xFF1C172A.toInt(),dp(11).toFloat(),0xFF795B9C.toInt())
+            setPadding(dp(11),dp(10),dp(11),dp(10))
         }
-        top.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-        // No hamburger menu. Tools remain accessible from the Jogar tab.
-
-        val statusCard = column().apply {
-            background = android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
-                intArrayOf(0xFF17121F.toInt(),0xFF3C2B53.toInt(),0xFF14111E.toInt())
-            ).apply {
-                cornerRadius=dp(13).toFloat()
-                setStroke(dp(1),0xFF715A90.toInt())
-            }
-            setPadding(dp(12), dp(if(landscape)7 else 10), dp(12), dp(if(landscape)7 else 11))
+        mouseIndicator=txt("◉  Mouse  •  ...",11f,Palette.white,true).apply {
+            gravity=Gravity.CENTER
+            background=rounded(0xFF1C172A.toInt(),dp(11).toFloat(),0xFF795B9C.toInt())
+            setPadding(dp(11),dp(10),dp(11),dp(10))
         }
-        val deviceRow = row()
-        deviceRow.addView(txt("◈  Mouse e teclado conectados", 13f, Palette.white, true),
-            LinearLayout.LayoutParams(0, -2, 1f))
-        devicesSummary = txt("Procurando...", 11f, Palette.violetSoft, true)
-        deviceRow.addView(devicesSummary)
-        statusCard.addView(deviceRow)
-        val deviceScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            setPadding(0, dp(8), 0, 0)
-        }
-        deviceStrip = row()
-        deviceScroll.addView(deviceStrip)
-        statusCard.addView(deviceScroll)
-        statusCard.addView(View(this).apply { setBackgroundColor(Palette.line) },
-            LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(10); bottomMargin = dp(9) })
-        val statusRow = row()
-        statusRow.addView(txt("Ativação do aplicativo", 13f, Palette.white),
-            LinearLayout.LayoutParams(0, -2, 1f))
-        activationChip = txt("VERIFICANDO", 11f, Palette.warning, true)
-        statusRow.addView(activationChip)
-        statusRow.setOnClickListener { showTab(1) }
-        statusCard.addView(statusRow)
-        if(landscape) {
-            val compact=row()
-            compact.addView(top,LinearLayout.LayoutParams(0,-2,0.96f).apply {rightMargin=dp(13)})
-            compact.addView(statusCard,LinearLayout.LayoutParams(0,-2,1.55f))
-            header.addView(compact)
-        } else {
-            header.addView(top,top.withMargin(bottom=14))
-            header.addView(statusCard)
-        }
-        root.addView(header, LinearLayout.LayoutParams(-1, -2).apply {
-            setMargins(dp(10),dp(if(landscape)6 else 10),dp(10),dp(if(landscape)5 else 10))
+        header.addView(keyboardIndicator,LinearLayout.LayoutParams(-2,-2).apply{rightMargin=dp(8)})
+        header.addView(mouseIndicator)
+        root.addView(header,LinearLayout.LayoutParams(-1,-2).apply {
+            setMargins(dp(9),dp(7),dp(9),dp(5))
         })
 
-        val tabs = row().apply {
-            background = rounded(Palette.panel, dp(13).toFloat())
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-        }
-        playTab = tabButton("Jogar") { showTab(0) }
-        activationTab = tabButton("Ativação") { showTab(1) }
-        optimizerTab = tabButton("Otimizar") { showTab(2) }
-        tabs.addView(playTab, LinearLayout.LayoutParams(0, dp(43), 1f))
-        tabs.addView(activationTab, LinearLayout.LayoutParams(0, dp(43), 1f))
-        tabs.addView(optimizerTab, LinearLayout.LayoutParams(0, dp(43), 1f))
-        root.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply {
-            setMargins(dp(16), 0, dp(16), dp(10))
-        })
-        body = FrameLayout(this)
-        root.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
+        // Keep the existing real external-device diagnostics and activation state.
+        deviceStrip=row()
+        devicesSummary=txt("...",10f,Palette.muted)
+        body=FrameLayout(this)
+        root.addView(body,LinearLayout.LayoutParams(-1,0,1f))
         createPlayPage()
+        createSettingsPage()
         createActivationPage()
-        optimizerPanel = OptimizerPanel(this) { showTab(1) }
+        optimizerPanel=OptimizerPanel(this){showTab(1)}
+
+        // Compact bottom nav; every tab switches to a real app function.
+        val bar=row().apply {
+            background=metallicSurface(false)
+            setPadding(dp(5),dp(5),dp(5),dp(5))
+        }
+        playTab=tabButton("⌂  Início"){showTab(0)}
+        activationTab=tabButton("✦  Ativação"){showTab(1)}
+        optimizerTab=tabButton("⚡  Otimizar"){showTab(2)}
+        settingsTab=tabButton("⚙  Configurações"){showTab(3)}
+        listOf(playTab,activationTab,optimizerTab,settingsTab).forEachIndexed { i,v ->
+            bar.addView(v,LinearLayout.LayoutParams(0,dp(42),1f).apply {
+                if(i>0)leftMargin=dp(4)
+            })
+        }
+        root.addView(bar,LinearLayout.LayoutParams(-1,-2).apply {
+            setMargins(dp(8),dp(5),dp(8),dp(6))
+        })
         showTab(0)
     }
 
-    private fun tabButton(label: String, tap: () -> Unit): TextView = txt(label, 14f, Palette.white, true).apply {
-        gravity = Gravity.CENTER
-        isClickable = true
-        isFocusable = true
-        setOnClickListener { tap() }
-    }
+    private fun tabButton(label:String,tap:()->Unit):TextView =
+        txt(label,12f,Palette.white,true).apply {
+            gravity=Gravity.CENTER
+            isClickable=true
+            isFocusable=true
+            setOnClickListener { tap() }
+        }
 
-    private fun showTab(index: Int) {
-        playTab.background = rounded(if (index == 0) Palette.primary else Palette.panel, dp(10).toFloat())
-        activationTab.background = rounded(if (index == 1) Palette.primary else Palette.panel, dp(10).toFloat())
-        optimizerTab.background = rounded(if (index == 2) Palette.primary else Palette.panel, dp(10).toFloat())
+    private fun showTab(index:Int) {
+        val tabs=listOf(playTab,activationTab,optimizerTab,settingsTab)
+        tabs.forEachIndexed { i,tab ->
+            tab.background=if(i==index)android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFFAB78E6.toInt(),0xFF7041AF.toInt(),0xFF492872.toInt())
+            ).apply {
+                cornerRadius=dp(11).toFloat()
+                setStroke(dp(1),0xFFE4C0FF.toInt())
+            } else rounded(0xFF1C1626.toInt(),dp(11).toFloat())
+            tab.setTextColor(if(i==index)Palette.white else Palette.muted)
+        }
         body.removeAllViews()
-        val page = when (index) {
-            0 -> playPage
-            1 -> activationPage
-            else -> optimizerPanel.view
+        val page=when(index) {
+            0->playPage
+            1->activationPage
+            2->optimizerPanel.view
+            else->settingsPage
         }
         (page.parent as? ViewGroup)?.removeView(page)
-        body.addView(page, FrameLayout.LayoutParams(-1, -1))
-        if (index == 1) updateActivation()
-        if (index == 2) optimizerPanel.onTabShown()
+        body.addView(page,FrameLayout.LayoutParams(-1,-1))
+        if(index==1) updateActivation()
+        if(index==2) optimizerPanel.onTabShown()
     }
 
     private fun createPlayPage() {
-        playPage = ScrollView(this).apply { isFillViewport = false; clipToPadding = false }
-        val content = column().apply { setPadding(dp(16), dp(4), dp(16), dp(28)) }
+        playPage=ScrollView(this).apply {
+            isFillViewport=true
+            clipToPadding=false
+            overScrollMode=View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        }
+        val content=column().apply {
+            gravity=Gravity.CENTER
+            setPadding(dp(14),dp(6),dp(14),dp(8))
+        }
         playPage.addView(content)
-
-        playGate = column().apply {
-            background = rounded(0xFF2C1C42.toInt(), dp(14).toFloat(), Palette.primaryDark)
-            setPadding(dp(14), dp(13), dp(14), dp(13))
+        playGate=row().apply {
+            background=rounded(0xFF321C47.toInt(),dp(11).toFloat(),0xFF9366C1.toInt())
+            setPadding(dp(10),dp(6),dp(10),dp(6))
         }
-        playGate.addView(txt("⚠  Precisamos de ativação", 15f, Palette.white, true))
-        playGate.addView(txt("Ative o mapeador antes de abrir um jogo por aqui.", 12f, Palette.muted),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6); bottomMargin = dp(10) })
-        playGate.addView(action("Ativar", true) { showTab(1) })
-        content.addView(playGate, playGate.withMargin(bottom = 19))
+        playGate.addView(txt("Ativação necessária para iniciar jogos com o HUD",11f,Palette.white),
+            LinearLayout.LayoutParams(0,-2,1f))
+        playGate.addView(action("Ativar",true){showTab(1)},
+            LinearLayout.LayoutParams(-2,dp(36)))
+        content.addView(playGate,LinearLayout.LayoutParams(-1,-2).apply {bottomMargin=dp(5)})
 
-        content.addView(txt("Meus Jogos", 19f, Palette.white, true),
-            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
-        gameCount = txt("Procurando jogos instalados...", 12f, Palette.muted)
-        content.addView(gameCount)
-        gameAdapter = GameAdapter(this, { onGameSelected(it) }, { openManualPicker() })
-        val recycler = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@MainActivity,
-                if(resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE)5 else 3)
-            adapter = gameAdapter
-            isNestedScrollingEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            itemAnimator = null
+        val central=column().apply {
+            gravity=Gravity.CENTER_HORIZONTAL
+            background=metallicSurface(true)
+            setPadding(dp(17),dp(13),dp(17),dp(14))
         }
-        content.addView(recycler, LinearLayout.LayoutParams(-1, -2).apply {
-            topMargin = dp(12); bottomMargin = dp(25)
+        val width=(resources.displayMetrics.widthPixels*0.88f).toInt().coerceAtMost(dp(680))
+        content.addView(central,LinearLayout.LayoutParams(width,-2).apply {topMargin=dp(5)})
+
+        emptyGamesPanel=column().apply {
+            gravity=Gravity.CENTER
+        }
+        val icon=txt("◇",39f,Palette.violetSoft,true).apply {
+            gravity=Gravity.CENTER
+            background=rounded(0xFF28143F.toInt(),dp(22).toFloat(),0xFFA17ACA.toInt())
+        }
+        emptyGamesPanel.addView(icon,LinearLayout.LayoutParams(dp(65),dp(53)).apply {
+            gravity=Gravity.CENTER_HORIZONTAL
         })
+        emptyGamesPanel.addView(txt("Nenhum jogo adicionado",20f,Palette.white,true).apply {
+            gravity=Gravity.CENTER
+        },LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(8)})
+        emptyGamesPanel.addView(txt(
+            "Escolha os aplicativos que deseja usar. Nenhum jogo é adicionado automaticamente.",
+            11f,Palette.muted
+        ).apply { gravity=Gravity.CENTER },
+            LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(5)})
+        emptyGamesPanel.addView(action("＋   Adicionar jogo",true){openManualPicker()},
+            LinearLayout.LayoutParams(-1,dp(47)).apply {
+                topMargin=dp(13)
+                leftMargin=dp(35)
+                rightMargin=dp(35)
+            })
+        central.addView(emptyGamesPanel)
 
-        content.addView(txt("Ferramentas e configurações", 18f, Palette.white, true),
-            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
-        settingsRow(content, "Configurações do app", "Aparência, entrada e compatibilidade") {
-            AlertDialog.Builder(this).setTitle("Configurações do app")
-                .setItems(arrayOf("Atualizar lista de jogos", "Ver dispositivos conectados", "Sobre o Referência")) { _, i ->
-                    when (i) {
-                        0 -> refreshGames()
-                        1 -> renderDevices()
-                        else -> info("Referência V6", "Android 10+. Mapeamento de teclado e mouse ainda está em desenvolvimento.")
-                    }
+        selectedGamesPanel=column().apply {gravity=Gravity.CENTER_HORIZONTAL}
+        val top=row()
+        top.addView(txt("Meus jogos",18f,Palette.white,true),LinearLayout.LayoutParams(0,-2,1f))
+        top.addView(action("＋  Adicionar jogo",true){openManualPicker()},
+            LinearLayout.LayoutParams(-2,dp(40)))
+        selectedGamesPanel.addView(top)
+        gameCount=txt("Nenhum jogo adicionado",11f,Palette.muted)
+        selectedGamesPanel.addView(gameCount,
+            LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(5)})
+        gameAdapter=GameAdapter(this,{onGameSelected(it)},{openManualPicker()}) { app ->
+            AlertDialog.Builder(this)
+                .setTitle("Remover da biblioteca?")
+                .setMessage("Remover "+app.label+" da Referência? O aplicativo não será desinstalado.")
+                .setNegativeButton("Cancelar",null)
+                .setPositiveButton("Remover"){_,_->
+                    games.removeManually(app.packageName)
+                    refreshGames()
                 }.show()
         }
-        settingsRow(content, "Mapeamentos", "Perfis e configurações de teclas") {
-            info("Editor HUD", "Abra um jogo pela aba Jogar, toque no botão flutuante e escolha Editar HUD. Toques por teclado externo podem funcionar com Acessibilidade habilitada.")
+        val recycler=RecyclerView(this).apply {
+            layoutManager=GridLayoutManager(this@MainActivity,5)
+            adapter=gameAdapter
+            isNestedScrollingEnabled=false
+            overScrollMode=View.OVER_SCROLL_NEVER
+            itemAnimator=null
         }
-        settingsRow(content, "Cursor do mouse", "Importar setinha .cur dos arquivos do Android") {
+        selectedGamesPanel.addView(recycler,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8)})
+        central.addView(selectedGamesPanel)
+        selectedGamesPanel.visibility=View.GONE
+    }
+
+    private fun createSettingsPage() {
+        settingsPage=ScrollView(this).apply {clipToPadding=false}
+        val content=column().apply {
+            setPadding(dp(18),dp(8),dp(18),dp(22))
+        }
+        settingsPage.addView(content)
+        content.addView(txt("Configurações",18f,Palette.white,true),
+            LinearLayout.LayoutParams(-1,-2).apply{bottomMargin=dp(7)})
+        settingsRow(content,"Adicionar aplicativo","Escolha qualquer aplicativo instalado") {
+            openManualPicker()
+        }
+        settingsRow(content,"Atualizar biblioteca","Recarregar aplicativos instalados") {
+            refreshGames()
+        }
+        settingsRow(content,"Mapeamentos","Configurar HUD pelo botão flutuante no jogo") {
+            info("Editor de HUD","Abra um jogo pela aba Início e selecione Editar HUD no botão flutuante. O motor de mouse relativo e analógico contínuo ainda não está completo.")
+        }
+        settingsRow(content,"Cursor do mouse","Selecionar arquivo .cur por jogo") {
             openCursorPicker()
         }
-        settingsRow(content, "Terminal ADB", "Informações de ativação") { showTab(1) }
-        settingsRow(content, "Apps em execução", "Gerenciamento de aplicativos") {
-            showTab(2)
+        settingsRow(content,"Dispositivos","Verificar mouse e teclado externos") {
+            renderDevices()
+            toast(devicesSummary.text.toString())
         }
-        settingsRow(content, "Restaurar resolução e DPI", "Recuperar a tela original com Shizuku, mesmo fora do jogo") {
+        settingsRow(content,"Ativação","Shizuku e permissões do dispositivo") {showTab(1)}
+        settingsRow(content,"Otimizar","Gerenciamento e hibernação de aplicativos"){showTab(2)}
+        settingsRow(content,"Restaurar resolução e DPI","Voltar aos valores originais da tela") {
             DisplayRecoveryUi.show(this)
         }
-        settingsRow(content, "Diagnóstico HUD", "Consultar por que o botão aparece ou desaparece") {
+        settingsRow(content,"Diagnóstico do HUD","Ver por que o botão aparece ou desaparece") {
             showHudDiagnostics()
         }
     }
@@ -393,6 +455,12 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         deviceStrip.removeAllViews()
         val found = try { devices.snapshot() } catch (_: Exception) { emptyList() }
         devicesSummary.text = if (found.isEmpty()) "Nenhum detectado" else "${found.size} dispositivo(s)"
+        val keyboard=found.any { it.kind.contains("Teclado",true) }
+        val mouse=found.any { it.kind.contains("Mouse",true) }
+        keyboardIndicator.text="⌨  "+(if(keyboard)"Conectado" else "Teclado desconectado")
+        mouseIndicator.text="◉  "+(if(mouse)"Conectado" else "Mouse desconectado")
+        keyboardIndicator.setTextColor(if(keyboard)Palette.success else Palette.white)
+        mouseIndicator.setTextColor(if(mouse)Palette.success else Palette.white)
         if (found.isEmpty()) {
             deviceStrip.addView(txt("Nenhum mouse ou teclado externo conectado", 12f, Palette.muted))
             return
@@ -417,10 +485,12 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                 allApps = found
                 val list = games.detectedGames(found)
                 gameAdapter.submit(list)
-                gameCount.text = when (list.size) {
-                    0 -> "Nenhum jogo detectado. Use Adicionar."
-                    1 -> "1 jogo encontrado"
-                    else -> "${list.size} jogos encontrados"
+                emptyGamesPanel.visibility=if(list.isEmpty())View.VISIBLE else View.GONE
+                selectedGamesPanel.visibility=if(list.isEmpty())View.GONE else View.VISIBLE
+                gameCount.text=when(list.size) {
+                    0->"Nenhum jogo adicionado"
+                    1->"1 aplicativo na biblioteca"
+                    else->"${list.size} aplicativos na biblioteca"
                 }
             }
         }
@@ -428,8 +498,9 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
     /** Mostra o ícone original do APK ao adicionar jogos (sem clones). */
     private fun openManualPicker() {
-        val candidates = allApps.filterNot { it.isGame }
-        if (candidates.isEmpty()) { toast("Nenhum outro aplicativo disponível"); return }
+        val selected=games.selectedPackages()
+        val candidates=allApps.filterNot { it.packageName in selected }
+        if (candidates.isEmpty()) { toast("Todos os aplicativos disponíveis já foram adicionados"); return }
         val adapter = object : BaseAdapter() {
             override fun getCount(): Int = candidates.size
             override fun getItem(position: Int): Any = candidates[position]

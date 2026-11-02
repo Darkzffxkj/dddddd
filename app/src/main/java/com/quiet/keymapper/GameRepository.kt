@@ -25,6 +25,13 @@ class GameRepository(private val context: Context) {
         prefs.edit().putStringSet("manually_added", next).apply()
     }
 
+    fun removeManually(packageName: String) {
+        val next=manualPackages().toMutableSet().apply { remove(packageName) }
+        prefs.edit().putStringSet("manually_added",next).apply()
+    }
+
+    fun selectedPackages():Set<String> = manualPackages()
+
     fun allLaunchable(): List<InstalledApp> {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         @Suppress("DEPRECATION")
@@ -42,7 +49,9 @@ class GameRepository(private val context: Context) {
         }.distinctBy { it.packageName }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.label })
     }
 
-    fun detectedGames(installed: List<InstalledApp>): List<InstalledApp> = installed.filter { it.isGame }
+    /** The home screen NEVER auto-populates classified games. Only user selections appear. */
+    fun detectedGames(installed: List<InstalledApp>): List<InstalledApp> =
+        installed.filter { it.packageName in manualPackages() }
 
     fun launchIntent(packageName: String): Intent? = packageManager.getLaunchIntentForPackage(packageName)
 }
