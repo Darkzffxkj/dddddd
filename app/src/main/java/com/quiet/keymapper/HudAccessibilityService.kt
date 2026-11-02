@@ -96,6 +96,14 @@ class HudAccessibilityService : AccessibilityService() {
         // Android sends transient windows for loading screens, IMEs, permission sheets and
         // overlays. TYPE_WINDOWS_CHANGED from another package does not prove the game exited.
         if (!seenGameOnce || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
+        // Game Booster, keyboard, notification and Android permission layers can raise
+        // windows without taking the game away from the player.
+        val systemTransient = value == "com.android.systemui" ||
+            value == "android" || value == "com.google.android.gms" ||
+            value.contains("permissioncontroller") ||
+            value.contains("inputmethod") || value.contains("keyboard") ||
+            value.startsWith("com.samsung.android.game.")
+        if (systemTransient) return
         if (transientWindow) return
         transientWindow = true
         val generation = ++windowGeneration
