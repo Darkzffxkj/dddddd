@@ -24,6 +24,7 @@ object DisplayRecoveryUi {
             dialog.setMessage("Restaurando resolução e densidade padrão...")
             client.reset { code ->
                 if(code==0) {
+                    DisplaySessionReset.clear(activity.applicationContext)
                     Toast.makeText(activity,"Tela restaurada",Toast.LENGTH_LONG).show()
                     dialog.dismiss()
                 } else {

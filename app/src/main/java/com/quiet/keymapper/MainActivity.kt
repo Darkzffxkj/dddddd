@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.content.res.Configuration
 import android.Manifest
 import android.provider.Settings
 import android.view.Gravity
@@ -61,6 +62,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private lateinit var gameAdapter: GameAdapter
     private var allApps = emptyList<InstalledApp>()
     private var disposed = false
+    private var launchingGame = false
     private var permissionsDialog: Dialog? = null
     private var permissionsRefresh: (() -> Unit)? = null
     private val cursorStore by lazy { CursorFileStore(this) }
@@ -97,11 +99,16 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         // During the initial launch, the game has not been observed yet, so this
         // never cancels the just-armed session.
         HudAccessibilityService.current?.onMainAppForeground()
+        DisplaySessionReset.restoreIfModified(applicationContext)
         if (::activationInfo.isInitialized) updateActivation()
         permissionsRefresh?.invoke()
     }
 
     override fun onStop() {
+        // Opening a game also pauses this Activity; leave its display profile active.
+        // Returning Home or minimizing Referência without launching a game resets it.
+        if(!launchingGame) DisplaySessionReset.restoreIfModified(applicationContext)
+        launchingGame=false
         inputManager.unregisterInputDeviceListener(this)
         handler.removeCallbacks(deviceRefresh)
         super.onStop()
@@ -130,12 +137,22 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private fun buildUi() {
         window.statusBarColor = Palette.primaryDark
         window.navigationBarColor = Palette.bg
-        val root = column().apply { setBackgroundColor(Palette.bg) }
+        val root = column().apply {
+            background=android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFF090711.toInt(),0xFF181226.toInt(),
+                    0xFF130B21.toInt(),0xFF08070D.toInt())
+            )
+        }
         setContentView(root)
 
+        val landscape=resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE
         val header = column().apply {
             background = gradientHeader(this@MainActivity)
-            setPadding(dp(17), dp(16), dp(17), dp(14))
+            setPadding(dp(landscape.let { if(it)13 else 17 }),
+                dp(if(landscape)9 else 16),
+                dp(if(landscape)13 else 17),
+                dp(if(landscape)9 else 14))
         }
         val top = row()
         val brand=ImageView(this).apply {
@@ -145,18 +162,22 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         }
         top.addView(brand,LinearLayout.LayoutParams(dp(48),dp(48)).apply { rightMargin=dp(10) })
         val title = column().apply {
-            addView(txt("Referência", 21f, Palette.white, true))
-            addView(txt("GAME MAPPER · ANDROID 10+", 10f, 0xFFE3C9FF.toInt(), true),
+            addView(txt("REFERÊNCIA", 21f, Palette.white, true))
+            addView(txt("M E T A L L I C  •  M A P P E R", 9f, 0xFFE6D8F8.toInt(), true),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         }
         top.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-        top.addView(action("☰", false) { showAppMenu() },
-            LinearLayout.LayoutParams(dp(45), dp(43)))
-        header.addView(top, top.withMargin(bottom = 14))
+        // No hamburger menu. Tools remain accessible from the Jogar tab.
 
         val statusCard = column().apply {
-            background = rounded(0xFF17121F.toInt(), dp(13).toFloat())
-            setPadding(dp(12), dp(10), dp(12), dp(11))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFF17121F.toInt(),0xFF3C2B53.toInt(),0xFF14111E.toInt())
+            ).apply {
+                cornerRadius=dp(13).toFloat()
+                setStroke(dp(1),0xFF715A90.toInt())
+            }
+            setPadding(dp(12), dp(if(landscape)7 else 10), dp(12), dp(if(landscape)7 else 11))
         }
         val deviceRow = row()
         deviceRow.addView(txt("◈  Mouse e teclado conectados", 13f, Palette.white, true),
@@ -180,8 +201,18 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         statusRow.addView(activationChip)
         statusRow.setOnClickListener { showTab(1) }
         statusCard.addView(statusRow)
-        header.addView(statusCard)
-        root.addView(header, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(10), dp(10), dp(10), dp(10)) })
+        if(landscape) {
+            val compact=row()
+            compact.addView(top,LinearLayout.LayoutParams(0,-2,0.96f).apply {rightMargin=dp(13)})
+            compact.addView(statusCard,LinearLayout.LayoutParams(0,-2,1.55f))
+            header.addView(compact)
+        } else {
+            header.addView(top,top.withMargin(bottom=14))
+            header.addView(statusCard)
+        }
+        root.addView(header, LinearLayout.LayoutParams(-1, -2).apply {
+            setMargins(dp(10),dp(if(landscape)6 else 10),dp(10),dp(if(landscape)5 else 10))
+        })
 
         val tabs = row().apply {
             background = rounded(Palette.panel, dp(13).toFloat())
@@ -248,7 +279,8 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         content.addView(gameCount)
         gameAdapter = GameAdapter(this, { onGameSelected(it) }, { openManualPicker() })
         val recycler = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@MainActivity, 3)
+            layoutManager = GridLayoutManager(this@MainActivity,
+                if(resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE)5 else 3)
             adapter = gameAdapter
             isNestedScrollingEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -591,15 +623,28 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
             AlertDialog.Builder(this)
                 .setTitle("Ativar editor e mapeamento")
                 .setMessage("Para mostrar o botão flutuante e executar os toques configurados, ative o serviço de acessibilidade Referência. Isso não modifica nem clona o jogo.")
-                .setNegativeButton("Abrir sem HUD") { _, _ -> try { startActivity(launch) } catch (_: Exception) { toast("Falha ao abrir o jogo") } }
+                .setNegativeButton("Abrir sem HUD") { _, _ ->
+                    try {
+                        launchingGame=true
+                        startActivity(launch)
+                    } catch (_: Exception) {
+                        launchingGame=false
+                        toast("Falha ao abrir o jogo")
+                    }
+                }
                 .setPositiveButton("Configurar acessibilidade") { _, _ ->
                     openSystemScreen(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 }.show()
             return
         }
         mapping.prepareGame(app.packageName)
-        try { startActivity(launch) }
-        catch (_: Exception) { toast("Falha ao abrir o jogo") }
+        try {
+            launchingGame=true
+            startActivity(launch)
+        } catch (_: Exception) {
+            launchingGame=false
+            toast("Falha ao abrir o jogo")
+        }
     }
 
     private fun updateActivation() {

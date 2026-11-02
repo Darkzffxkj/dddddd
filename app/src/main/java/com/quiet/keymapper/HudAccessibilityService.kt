@@ -43,6 +43,7 @@ class HudAccessibilityService : AccessibilityService() {
     private var typing = false
     private var suspended = false
     private var editing = false
+    private var bubbleHiddenThisGame = false
     private var bubble: View? = null
     private var menu: View? = null
     private var panel: View? = null
@@ -113,6 +114,7 @@ class HudAccessibilityService : AccessibilityService() {
             profile=store.load(game)
             typing=false
             suspended=false
+            bubbleHiddenThisGame=false
             seenGameOnce=false
             transientWindow=false
             firstGameWindowAt=0L
@@ -244,6 +246,7 @@ class HudAccessibilityService : AccessibilityService() {
     }
     private fun leaveGame(reason:String="EXIT_SCREEN_OFF") {
         diagnostic(reason)
+        DisplaySessionReset.restoreIfModified(applicationContext)
         cancelPendingExit()
         foreground=""
         seenGameOnce=false
@@ -262,6 +265,7 @@ class HudAccessibilityService : AccessibilityService() {
         alive=false
         cancelPendingExit()
         handler.removeCallbacks(keepHud)
+        DisplaySessionReset.restoreIfModified(applicationContext)
         displayClient?.close()
         displayClient=null
         try { unregisterReceiver(screenOffReceiver) } catch (_:Exception) {}
@@ -416,7 +420,7 @@ class HudAccessibilityService : AccessibilityService() {
         p.y=if(c<2) dp(60) else sz.y-side-dp(56)
     }
     private fun showBubble(){
-        if(bubble!=null || panel!=null || game.isEmpty() || foreground!=game)return
+        if(bubbleHiddenThisGame || bubble!=null || panel!=null || game.isEmpty() || foreground!=game)return
         val v=ImageView(this).apply {
             setImageResource(R.drawable.brand_logo)
             scaleType=ImageView.ScaleType.FIT_CENTER
@@ -473,6 +477,12 @@ class HudAccessibilityService : AccessibilityService() {
             (if(typing)"Voltar ao controle" else "Digitar no teclado") to {
                 typing=!typing;closeMenu()
                 toast(if(typing)"Toque no chat para digitar" else "Controles retomados")
+            },
+            "✕ Ocultar botão flutuante" to {
+                bubbleHiddenThisGame=true
+                closeMenu()
+                remove(bubble);bubble=null
+                toast("Botão ocultado. Reabra o jogo pela Referência para mostrar novamente.")
             }
         )
         options.forEach { (title,task)->
@@ -533,9 +543,24 @@ class HudAccessibilityService : AccessibilityService() {
         val gear=txt("⚙",21f).apply {
             gravity=Gravity.CENTER
             background=bg(0xEE24152D.toInt(),0xFFC5A0FF.toInt())
+            contentDescription="Configurar controle"
             setOnClickListener { openControlSettings(c) }
         }
         v.addView(gear,FrameLayout.LayoutParams(dp(28),dp(28),Gravity.TOP or Gravity.RIGHT))
+        val delete=txt("×",22f).apply {
+            gravity=Gravity.CENTER
+            setTextColor(0xFFFFDAED.toInt())
+            background=bg(0xF05D1C42.toInt(),0xFFFF86B5.toInt())
+            contentDescription="Excluir controle do HUD"
+            setOnClickListener {
+                profile.controls.remove(c)
+                save()
+                openEditor()
+                toast("Controle excluído do HUD")
+            }
+        }
+        v.addView(delete,FrameLayout.LayoutParams(dp(28),dp(28),
+            Gravity.BOTTOM or Gravity.RIGHT))
         val params=FrameLayout.LayoutParams(side,side).apply {
             leftMargin=(c.x*sz.x-side/2).toInt().coerceIn(0,max(0,sz.x-side))
             topMargin=(c.y*sz.y-side/2).toInt().coerceIn(dp(54),max(dp(54),sz.y-side-dp(43)))
@@ -812,6 +837,7 @@ class HudAccessibilityService : AccessibilityService() {
                             " e "+n.third+" DPI..."
                         client.apply(n.first,n.second,n.third) { code ->
                             if(code==0) {
+                                DisplaySessionReset.markApplied(applicationContext)
                                 toast("Teste ativo! Confirme antes de 45 segundos.")
                                 client.query { fresh,error ->
                                     if(fresh!=null)render(fresh)
@@ -836,6 +862,7 @@ class HudAccessibilityService : AccessibilityService() {
                     status.text="Restaurando valores padrão..."
                     client.reset { code ->
                         if(code==0) {
+                            DisplaySessionReset.clear(applicationContext)
                             toast("Tela restaurada")
                             client.query { fresh,error ->
                                 if(fresh!=null)render(fresh)
