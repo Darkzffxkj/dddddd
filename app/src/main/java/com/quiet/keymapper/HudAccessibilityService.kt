@@ -42,6 +42,9 @@ class HudAccessibilityService : AccessibilityService() {
     private var profile = HudProfile()
     private var typing = false
     private var suspended = false
+    private val virtualCursor by lazy { VirtualGameCursor(this,wm) }
+    private var cursorRequested = false
+    private var lastPointerTapAt = 0L
     private var editing = false
     private var bubbleHiddenThisGame = false
     private var bubble: View? = null
@@ -90,8 +93,9 @@ class HudAccessibilityService : AccessibilityService() {
         handler.postDelayed(keepHud,2200L)
         try { registerReceiver(screenOffReceiver,IntentFilter(Intent.ACTION_SCREEN_OFF)) } catch (_:Exception) {}
         serviceInfo = serviceInfo.apply {
-            flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+            flags=flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         }
+        updateMouseCapture()
         // Recover the last launched game when Android restarts an enabled service.
         val previous = getSharedPreferences("referencia_hud_profiles_v7",Context.MODE_PRIVATE)
             .getString("active_game",null)
@@ -114,6 +118,7 @@ class HudAccessibilityService : AccessibilityService() {
             profile=store.load(game)
             typing=false
             suspended=false
+            cursorRequested=true
             bubbleHiddenThisGame=false
             seenGameOnce=false
             transientWindow=false
@@ -124,10 +129,74 @@ class HudAccessibilityService : AccessibilityService() {
             getSharedPreferences("referencia_hud_profiles_v7",Context.MODE_PRIVATE)
                 .edit().putString("active_game",packageName).apply()
             diagnostic("ARMED " + packageName)
+            updateVirtualCursor()
             // Do not show a bubble on the launcher. First wait for the game's
             // TYPE_WINDOW_STATE_CHANGED / TYPE_WINDOWS_CHANGED event.
         }
     }
+    /** SDK 34+: mouse motion delivered by AccessibilityService is exclusive while enabled.
+     * Older Android versions keep their native mouse pointer; a global replacement
+     * cannot be implemented safely through public accessibility APIs.
+     */
+    private fun updateMouseCapture() {
+        if(Build.VERSION.SDK_INT<34)return
+        try {
+            val enabled=game.isNotBlank() && foreground==game &&
+                cursorRequested && !suspended && !typing && !editing
+            val info=serviceInfo
+            info.setMotionEventSources(
+                if(enabled) InputDevice.SOURCE_MOUSE else 0
+            )
+            serviceInfo=info
+        } catch(error:Exception) {
+            diagnostic("MOUSE_CAPTURE_UNAVAILABLE "+error.javaClass.simpleName)
+        }
+    }
+    private fun updateVirtualCursor() {
+        val visible=game.isNotBlank() && foreground==game &&
+            cursorRequested && !editing && !typing
+        if(visible && !virtualCursor.active) virtualCursor.show(game)
+        if(!visible && virtualCursor.active) virtualCursor.hide()
+        updateMouseCapture()
+    }
+    private fun toggleSuspend() {
+        suspended=!suspended
+        cancelAllPresses()
+        if(suspended) {
+            virtualCursor.center()
+            diagnostic("SUSPENDED_CURSOR_CENTER")
+        } else virtualCursor.center()
+        updateVirtualCursor()
+        toast(if(suspended)"Controles suspensos • cursor centralizado"
+              else "Controles retomados")
+    }
+    override fun onMotionEvent(event:MotionEvent) {
+        super.onMotionEvent(event)
+        if(Build.VERSION.SDK_INT<34 || game.isBlank() ||
+            foreground!=game || !cursorRequested ||
+            suspended || typing || editing)return
+        if(event.source and InputDevice.SOURCE_MOUSE != InputDevice.SOURCE_MOUSE)return
+        when(event.actionMasked) {
+            MotionEvent.ACTION_HOVER_MOVE,MotionEvent.ACTION_MOVE -> {
+                // Android supplies absolute mouse coordinates for SOURCE_MOUSE.
+                // Relative devices are handled using their movement deltas.
+                if(event.source and InputDevice.SOURCE_MOUSE_RELATIVE ==
+                    InputDevice.SOURCE_MOUSE_RELATIVE) {
+                    virtualCursor.moveBy(event.x,event.y)
+                } else virtualCursor.moveTo(event.x,event.y)
+            }
+            MotionEvent.ACTION_BUTTON_PRESS,MotionEvent.ACTION_DOWN -> {
+                if(event.buttonState and MotionEvent.BUTTON_PRIMARY == 0)return
+                val now=SystemClock.uptimeMillis()
+                if(now-lastPointerTapAt>110L) {
+                    lastPointerTapAt=now
+                    val (tx,ty)=virtualCursor.normalized()
+                    tap(tx,ty)
+                }
+            }
+        }
+    }
+
     fun onMainAppForeground() {
         // Called only when MainActivity is RESUMED, not at game launch.
         if(game.isNotBlank() && seenGameOnce) leaveGame("RETURNED_TO_MAPPER")
@@ -166,6 +235,7 @@ class HudAccessibilityService : AccessibilityService() {
             seenGameOnce=true
             transientWindow=false
             if(!editing && bubble==null) showBubble()
+            updateVirtualCursor()
             ensureMonitor()
             return
         }
@@ -255,6 +325,8 @@ class HudAccessibilityService : AccessibilityService() {
         lastGameWindowAt=0L
         armedAt=0L
         cancelAllPresses()
+        cursorRequested=false
+        updateVirtualCursor()
         closeAll()
         game=""
         getSharedPreferences("referencia_hud_profiles_v7",Context.MODE_PRIVATE)
@@ -270,6 +342,9 @@ class HudAccessibilityService : AccessibilityService() {
         displayClient=null
         try { unregisterReceiver(screenOffReceiver) } catch (_:Exception) {}
         cancelAllPresses()
+        cursorRequested=false
+        virtualCursor.hide()
+        updateMouseCapture()
         closeAll()
         if (current === this) current = null
         super.onDestroy()
@@ -296,6 +371,7 @@ class HudAccessibilityService : AccessibilityService() {
             if(e.action==KeyEvent.ACTION_DOWN && e.repeatCount==0) {
                 typing=!typing
                 if(typing) cancelAllPresses()
+                updateVirtualCursor()
                 toast(if(typing) "Modo digitação" else "Modo controle")
             }
             return true
@@ -304,10 +380,15 @@ class HudAccessibilityService : AccessibilityService() {
             it.kind=="SUSPEND" && it.keyCode==e.keyCode
         }
         if(suspend!=null) {
+            if(e.action==KeyEvent.ACTION_DOWN && e.repeatCount==0)
+                toggleSuspend()
+            return true
+        }
+        if(profile.resetViewKey!=KeyEvent.KEYCODE_UNKNOWN &&
+            profile.resetViewKey==e.keyCode) {
             if(e.action==KeyEvent.ACTION_DOWN && e.repeatCount==0) {
-                suspended=!suspended
-                if(suspended) cancelAllPresses()
-                toast(if(suspended) "Controles suspensos" else "Controles retomados")
+                virtualCursor.center()
+                toast("Cursor virtual centralizado")
             }
             return true
         }
@@ -406,7 +487,11 @@ class HudAccessibilityService : AccessibilityService() {
         } else monitor?.text=line
     }
     private fun closeMenu(){remove(menu);menu=null}
-    private fun closePanel(){remove(panel);panel=null;editing=false;bindKey=null;showBubble()}
+    private fun closePanel(){
+        remove(panel);panel=null;editing=false;bindKey=null
+        showBubble()
+        updateVirtualCursor()
+    }
     private fun closeAll(){
         remove(menu);menu=null;remove(panel);panel=null;remove(bubble);bubble=null
         remove(monitor);monitor=null
@@ -473,9 +558,17 @@ class HudAccessibilityService : AccessibilityService() {
         container.addView(txt("Referência • HUD",15f))
         val options=listOf<Pair<String,()->Unit>>(
             "Editar HUD" to {openEditor()},
-            "Configurações" to {openSettings()},
+            "Mouse / Suspender + Sensi" to {openMouseSettings()},
+            "Resolução / DPI" to {openSettingsPage(4)},
+            (if(cursorRequested)"Ocultar cursor virtual" else "Mostrar cursor virtual") to {
+                cursorRequested=!cursorRequested
+                closeMenu()
+                updateVirtualCursor()
+                toast(if(cursorRequested)"Cursor virtual ativado" else "Cursor virtual oculto")
+            },
             (if(typing)"Voltar ao controle" else "Digitar no teclado") to {
                 typing=!typing;closeMenu()
+                updateVirtualCursor()
                 toast(if(typing)"Toque no chat para digitar" else "Controles retomados")
             },
             "✕ Ocultar botão flutuante" to {
@@ -497,6 +590,7 @@ class HudAccessibilityService : AccessibilityService() {
     private fun fullScreen(edit:Boolean,allowKeyboard:Boolean=false):FrameLayout{
         closeMenu();remove(bubble);bubble=null;remove(panel);panel=null
         editing=edit
+        updateVirtualCursor()
         val root=FrameLayout(this).apply { setBackgroundColor(0x90090514.toInt()) }
         val overlayParams=lp(-1,-1)
         if(allowKeyboard) {
@@ -509,30 +603,136 @@ class HudAccessibilityService : AccessibilityService() {
         if(add(root,overlayParams))panel=root
         return root
     }
-    private fun openEditor(){
+    private fun openEditor(showCatalog:Boolean=true) {
         val root=fullScreen(true)
-        val bar=HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false}
-        val line=row().apply{setPadding(dp(6),dp(6),dp(6),dp(6));background=bg(0xF51A1126.toInt())}
-        fun tool(s:String,fn:()->Unit){
-            line.addView(btn(s,fn),LinearLayout.LayoutParams(-2,dp(42)).apply{rightMargin=dp(5)})
+        val bar=row().apply {
+            setPadding(dp(8),dp(5),dp(8),dp(5))
+            background=bg(0xF4110E24.toInt(),0xFF686BEE.toInt())
         }
-        tool("⊙ Tocar"){newControl("TOUCH")}
-        tool("◉ Atirar"){newControl("FIRE")}
-        tool("◎ Analógico"){newControl("JOYSTICK")}
-        tool("⌖ Suspender + Sensi"){newControl("SUSPEND")}
-        tool("Salvar"){save();closePanel();toast("Perfil do jogo salvo")}
-        tool("Fechar"){closePanel()}
-        bar.addView(line)
+        val title=txt("REFERÊNCIA  /  EDITOR DE HUD",15f).apply{
+            setTextColor(0xFFE6DBFF.toInt())
+        }
+        bar.addView(title,LinearLayout.LayoutParams(0,-2,1f))
+        bar.addView(btn("＋ Componente"){showComponentCatalog(root)},
+            LinearLayout.LayoutParams(-2,dp(42)).apply{rightMargin=dp(6)})
+        bar.addView(btn("Salvar") {
+            save()
+            closePanel()
+            toast("HUD salvo")
+        },LinearLayout.LayoutParams(-2,dp(42)).apply{rightMargin=dp(6)})
+        bar.addView(btn("✕"){closePanel()},LinearLayout.LayoutParams(dp(48),dp(42)))
         root.addView(bar,FrameLayout.LayoutParams(-1,-2,Gravity.TOP))
-        val hint=txt("Arraste para posicionar • toque para configurar • segure para remover",11f)
-        root.addView(hint,FrameLayout.LayoutParams(-1,dp(35),Gravity.BOTTOM))
-        profile.controls.toList().forEach{makeMarker(root,it)}
+        val hint=txt("Arraste as bolinhas • ⚙ configura • × exclui",11f).apply{
+            setPadding(dp(12),0,dp(12),0)
+            setTextColor(0xFFE2D5FF.toInt())
+            background=bg(0xE91B142B.toInt(),0xFF7861B3.toInt())
+        }
+        root.addView(hint,FrameLayout.LayoutParams(-1,dp(31),Gravity.BOTTOM))
+        profile.controls.toList().forEach { makeMarker(root,it) }
+        if(showCatalog) showComponentCatalog(root)
     }
+
+    private fun showComponentCatalog(root:FrameLayout) {
+        root.findViewWithTag<View>("componentCatalog")?.let {root.removeView(it)}
+        val scroller=ScrollView(this).apply {
+            tag="componentCatalog"
+            isFillViewport=false
+            isVerticalScrollBarEnabled=true
+            overScrollMode=View.OVER_SCROLL_IF_CONTENT_SCROLL
+            background=bg(0xF513122E.toInt(),0xFF6871FF.toInt())
+        }
+        val sheet=col().apply {setPadding(dp(13),dp(9),dp(13),dp(12))}
+        val top=row()
+        top.addView(txt("ADICIONAR COMPONENTE",20f).apply {
+            setTextColor(0xFFF9F4FF.toInt())
+        },LinearLayout.LayoutParams(0,-2,1f))
+        top.addView(btn("✕"){root.removeView(scroller)},
+            LinearLayout.LayoutParams(dp(47),dp(42)))
+        sheet.addView(top)
+        sheet.addView(txt("Selecione um componente para colocar no keymap",12f).apply {
+            setTextColor(0xFFC7C1E5.toInt())
+        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(5);bottomMargin=dp(10)})
+        val grid=android.widget.GridLayout(this).apply {
+            columnCount=4
+        }
+        val sz=size()
+        val catalogWidth=min(sz.x-dp(18),dp(855))
+        val cellWidth=max(dp(75),(catalogWidth-dp(35))/4)
+        val cards=listOf(
+            Triple("TOUCH","☝","Toque"),
+            Triple("SWIPE","↗","Deslizar"),
+            Triple("SCROLL","◉","Rolar com o mouse"),
+            Triple("MACRO","⇄","Macro"),
+            Triple("JOYSTICK","✥","Joystick"),
+            Triple("VISION","⌖","Visão FPS"),
+            Triple("LOOK","◎","Olhar Livre"),
+            Triple("MOUSE_SELECTION","⊕","Seleção do Mouse"),
+            Triple("SUSPEND","Ⅱ","Suspender + Sensi"),
+            Triple("FIRE","◉","Atirar")
+        )
+        cards.forEachIndexed {i,(kind,icon,label)->
+            val available=kind in setOf("TOUCH","JOYSTICK","SUSPEND","FIRE")
+            val tile=col().apply {
+                gravity=Gravity.CENTER
+                setPadding(dp(6),dp(5),dp(6),dp(5))
+                background=GradientDrawable(
+                    GradientDrawable.Orientation.TL_BR,
+                    if(available) intArrayOf(0xFF262655.toInt(),
+                        0xFF1B1B3E.toInt(),0xFF171630.toInt())
+                    else intArrayOf(0xFF18182A.toInt(),0xFF131326.toInt())
+                ).apply {
+                    cornerRadius=dp(11).toFloat()
+                    setStroke(dp(2),if(available)0xFF656AFF.toInt() else 0xFF393A72.toInt())
+                }
+                isClickable=true
+                setOnClickListener {
+                    if(available) newControl(kind)
+                    else toast(label+" • motor de entrada ainda não implementado")
+                }
+            }
+            val glyph=txt(icon,28f).apply {
+                gravity=Gravity.CENTER
+                setTextColor(if(available)Color.WHITE else 0xFF8885AA.toInt())
+            }
+            tile.addView(glyph,LinearLayout.LayoutParams(-1,dp(49)))
+            val name=txt(label,12f).apply{
+                gravity=Gravity.CENTER
+                setTextColor(if(available)Color.WHITE else 0xFFA9A3C9.toInt())
+                maxLines=2
+            }
+            tile.addView(name,LinearLayout.LayoutParams(-1,-2))
+            if(!available) tile.addView(txt("EM BREVE",8f).apply {
+                gravity=Gravity.CENTER
+                setTextColor(0xFFAEA9FF.toInt())
+            },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(3)})
+            grid.addView(tile,android.widget.GridLayout.LayoutParams(
+                android.widget.GridLayout.spec(i/4),
+                android.widget.GridLayout.spec(i%4)
+            ).apply {
+                width=cellWidth-dp(5)
+                height=dp(112)
+                setMargins(dp(2),dp(2),dp(3),dp(4))
+            })
+        }
+        sheet.addView(grid)
+        sheet.addView(txt(
+            "Toque, Atirar e Suspender estão disponíveis. Joystick registra o perfil, "+
+            "mas o movimento WASD contínuo ainda precisa do motor de gestos. "+
+            "As funções marcadas EM BREVE não geram comandos falsos.",10f
+        ).apply{
+            setTextColor(0xFFD3CCE7.toInt())
+        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(6)})
+        scroller.addView(sheet)
+        val p=FrameLayout.LayoutParams(catalogWidth,
+            min(sz.y-dp(85),dp(530)),Gravity.CENTER)
+        root.addView(scroller,p)
+    }
+
     private fun newControl(kind:String){
         if(profile.controls.size>=90){toast("Limite de controles");return}
         val c=HudControl(kind,
             when(kind) { "SUSPEND"->KeyEvent.KEYCODE_F9;"FIRE"->KeyEvent.KEYCODE_F;else->KeyEvent.KEYCODE_SPACE },.5f,.49f)
-        profile.controls.add(c);save();openEditor();openControlSettings(c)
+        profile.controls.add(c);save();openEditor(false);openControlSettings(c)
     }
     private fun makeMarker(root:FrameLayout,c:HudControl){
         val sz=size()
@@ -587,7 +787,7 @@ class HudAccessibilityService : AccessibilityService() {
                         c.y=(params.topMargin+side/2f)/sz.y
                         save()
                     } else if(android.os.SystemClock.uptimeMillis()-start>650) {
-                        profile.controls.remove(c);save();openEditor()
+                        profile.controls.remove(c);save();openEditor(false)
                     } else openControlSettings(c)
                     true
                 }
@@ -638,6 +838,10 @@ class HudAccessibilityService : AccessibilityService() {
             box.addView(txt("WASD e Shift: perfil salvo; movimento contínuo requer motor multitouch.",11f))
         }
         if(c.kind=="SUSPEND"){
+            box.addView(btn("Abrir configuração de Mouse / Visão") {
+                save()
+                openMouseSettings()
+            },LinearLayout.LayoutParams(-1,dp(43)).apply{topMargin=dp(6)})
             box.addView(btn("Preset estilo MSI App Player 5.9"){
                 profile.sensitivityX=350;profile.sensitivityY=350
                 profile.aimAcceleration=0;profile.aimSmoothing=10
@@ -655,6 +859,136 @@ class HudAccessibilityService : AccessibilityService() {
     }
     // Main menu follows the five categories in the supplied reference, adapted
     // to the project's existing dark-purple Android visual language.
+    /** Mouse / vision configuration inspired by the supplied reference screenshot.
+     * Settings which depend on a full relative-aim engine are clearly labeled.
+     */
+    private fun openMouseSettings() {
+        val root=fullScreen(false)
+        val scroll=ScrollView(this)
+        val layout=col().apply {
+            background=bg(0xF5110D1C.toInt(),0xFF6C63FB.toInt())
+            setPadding(dp(16),dp(10),dp(16),dp(16))
+        }
+        val header=row()
+        header.addView(txt("CONFIGURAÇÃO  •  MOUSE E VISÃO",17f).apply {
+            setTextColor(0xFFF4ECFF.toInt())
+        },LinearLayout.LayoutParams(0,-2,1f))
+        header.addView(btn("✕"){closePanel()},LinearLayout.LayoutParams(dp(46),dp(41)))
+        layout.addView(header)
+        layout.addView(txt("SUSPENDER  /  CURSOR VIRTUAL  /  SENSIBILIDADE",10f).apply {
+            setTextColor(0xFFA9A4FF.toInt())
+        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(7);bottomMargin=dp(10)})
+        var suspendControl=profile.controls.firstOrNull {it.kind=="SUSPEND"}
+        fun rowButton(label:String,code:Int,onTap:()->Unit) {
+            val line=row()
+            line.addView(txt(label,12f),LinearLayout.LayoutParams(0,-2,1f))
+            line.addView(txt(KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_"),12f).apply {
+                setTextColor(0xFFDAD3FF.toInt())
+            },LinearLayout.LayoutParams(-2,-2).apply{rightMargin=dp(8)})
+            line.addView(btn("ALTERAR",onTap),LinearLayout.LayoutParams(dp(95),dp(39)))
+            layout.addView(line,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8)})
+        }
+        if(suspendControl==null) {
+            val add=btn("＋  Adicionar Suspender ao HUD") {
+                if(profile.controls.none {it.kind=="SUSPEND"}) {
+                    profile.controls.add(HudControl("SUSPEND",KeyEvent.KEYCODE_F9,.5f,.5f))
+                }
+                profile.suspendEnabled=true
+                save()
+                openMouseSettings()
+            }
+            layout.addView(add,LinearLayout.LayoutParams(-1,dp(43)))
+        } else {
+            rowButton("Tecla para Suspender / Soltar mouse",suspendControl.keyCode) {
+                bindKey={code ->
+                    suspendControl?.let { it.keyCode=code }
+                    profile.suspendEnabled=true
+                    save()
+                    openMouseSettings()
+                }
+                toast("Pressione uma tecla física para Suspender")
+            }
+        }
+        rowButton("Tecla para centralizar o cursor",profile.resetViewKey) {
+            bindKey={code ->
+                profile.resetViewKey=code
+                save()
+                openMouseSettings()
+            }
+            toast("Pressione uma tecla física para centralizar")
+        }
+        val center=btn("⌖  Centralizar cursor agora") {
+            virtualCursor.center()
+            toast("Cursor virtual centralizado")
+        }
+        layout.addView(center,LinearLayout.LayoutParams(-1,dp(43)).apply{topMargin=dp(10)})
+        val status=txt("Estado: "+if(suspended)"Suspenso" else "Controles ativos",12f)
+        status.setTextColor(if(suspended)0xFFFFCE9C.toInt() else 0xFFBEECDA.toInt())
+        layout.addView(status,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8)})
+        val toggleButton=btn(if(suspended)"▶  Retomar controles" else "Ⅱ  Suspender controles") {
+            toggleSuspend()
+            openMouseSettings()
+        }
+        layout.addView(toggleButton,LinearLayout.LayoutParams(-1,dp(43)).apply{topMargin=dp(9)})
+        val divider=View(this).apply {setBackgroundColor(0xFF5B4387.toInt())}
+        layout.addView(divider,LinearLayout.LayoutParams(-1,dp(1)).apply{topMargin=dp(13);bottomMargin=dp(9)})
+        val pointer=txt("Cursor virtual no jogo: "+if(cursorRequested)"Ativado" else "Desativado",12f)
+        layout.addView(pointer)
+        val showCursor=btn(if(cursorRequested)"Ocultar seta virtual" else "Mostrar seta virtual") {
+            cursorRequested=!cursorRequested
+            updateVirtualCursor()
+            openMouseSettings()
+        }
+        layout.addView(showCursor,LinearLayout.LayoutParams(-1,dp(41)).apply{topMargin=dp(5)})
+        val selected=cursors.filename(game)
+        layout.addView(txt("Seta: "+(selected ?: "Roxa padrão")+"  •  "+cursors.size(game)+" px",11f),
+            LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(7)})
+        val notice=txt(
+            "A seta .cur é importada na tela inicial. Android 14+: captura experimental de mouse. "+
+            "A seta nativa pode continuar visível em alguns dispositivos; "+
+            "Android 10–13 não disponibiliza captura global do mouse por essa API.",11f
+        )
+        notice.setTextColor(0xFFD9C2F1.toInt())
+        layout.addView(notice,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(7)})
+        val divider2=View(this).apply{setBackgroundColor(0xFF5B4387.toInt())}
+        layout.addView(divider2,LinearLayout.LayoutParams(-1,dp(1)).apply{topMargin=dp(12);bottomMargin=dp(9)})
+        layout.addView(txt("SENSIBILIDADE  •  PERFIL DE MIRA",13f).apply{
+            setTextColor(0xFFDBBBFF.toInt())
+        })
+        seek(layout,"Sensibilidade Horizontal (X)",profile.sensitivityX,1,1000) {
+            profile.sensitivityX=it
+        }
+        seek(layout,"Sensibilidade Vertical (Y)",profile.sensitivityY,1,1000) {
+            profile.sensitivityY=it
+        }
+        seek(layout,"Aceleração (%)",profile.aimAcceleration,0,100){
+            profile.aimAcceleration=it
+        }
+        seek(layout,"Suavização (%)",profile.aimSmoothing,0,100){
+            profile.aimSmoothing=it
+        }
+        layout.addView(btn("Preset visual estilo MSI App Player 5.9"){
+            profile.sensitivityX=350;profile.sensitivityY=350
+            profile.aimAcceleration=0;profile.aimSmoothing=10
+            profile.msiStyle=true
+            save()
+            openMouseSettings()
+        },LinearLayout.LayoutParams(-1,dp(43)).apply{topMargin=dp(9)})
+        val foot=txt(
+            "X/Y, aceleração e suavização são parâmetros de perfil. "+
+            "O motor de mira contínua não está implementado nesta versão. "+
+            "Ao suspender, a posição do cursor virtual volta ao centro da tela.",11f
+        )
+        foot.setTextColor(0xFFFFD6AD.toInt())
+        layout.addView(foot,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8)})
+        layout.addView(btn("SALVAR E FECHAR"){save();closePanel()},
+            LinearLayout.LayoutParams(-1,dp(43)).apply{topMargin=dp(10)})
+        scroll.addView(layout)
+        val sz=size()
+        root.addView(scroll,FrameLayout.LayoutParams(
+            min(sz.x-dp(16),dp(740)),min(sz.y-dp(16),dp(650)),Gravity.CENTER))
+    }
+
     private fun openSettings() {
         val root=fullScreen(false)
         val scroll=ScrollView(this)
