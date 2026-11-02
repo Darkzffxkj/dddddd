@@ -43,12 +43,23 @@ class HudAccessibilityService : AccessibilityService() {
     private var bindKey: ((Int) -> Unit)? = null
     private var consumedBindingUp = -1
     private val held = mutableSetOf<Int>()
+    private var windowGeneration = 0
+    private var transientWindow = false
+    private var seenGameOnce = false
+    private val cursors by lazy { CursorFileStore(this) }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         current = this
         serviceInfo = serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+        }
+        // Recover the last launched game when Android restarts an enabled service.
+        val previous = getSharedPreferences("referencia_hud_profiles_v7",Context.MODE_PRIVATE)
+            .getString("active_game",null)
+        if (!previous.isNullOrBlank()) {
+            game = previous
+            profile = store.load(game)
         }
     }
     fun prepareGame(packageName: String) {
@@ -59,19 +70,44 @@ class HudAccessibilityService : AccessibilityService() {
                 profile = store.load(game)
                 typing = false
                 suspended = false
+                seenGameOnce = false
+                transientWindow = false
+                windowGeneration++
             }
+            getSharedPreferences("referencia_hud_profiles_v7",Context.MODE_PRIVATE)
+                .edit().putString("active_game",packageName).apply()
             if (foreground == game) showBubble()
         }
     }
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
-        if (e?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            e?.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
+        val type = e?.eventType ?: return
+        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            type != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
         val value = e.packageName?.toString() ?: return
-        if (value == packageName || value.isEmpty()) return
-        foreground = value
-        if (value == game && game.isNotEmpty()) {
+        if (value.isBlank() || value == packageName || game.isBlank()) return
+        if (value == game) {
+            windowGeneration++
+            transientWindow = false
+            foreground = game
+            seenGameOnce = true
             if (!editing && bubble == null) showBubble()
-        } else if (bubble != null || panel != null || menu != null) closeAll()
+            return
+        }
+        // Android sends transient windows for loading screens, IMEs, permission sheets and
+        // overlays. TYPE_WINDOWS_CHANGED from another package does not prove the game exited.
+        if (!seenGameOnce || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
+        if (transientWindow) return
+        transientWindow = true
+        val generation = ++windowGeneration
+        // Hide only after a stable 8-second absence of the game. On a new game window
+        // event, this callback becomes obsolete; thus the HUD survives startup transitions.
+        handler.postDelayed({
+            if (generation == windowGeneration && transientWindow && seenGameOnce) {
+                foreground = ""
+                transientWindow = false
+                closeAll()
+            }
+        }, 8000L)
     }
     override fun onInterrupt() {}
     override fun onDestroy() {
@@ -80,7 +116,7 @@ class HudAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
     override fun onKeyEvent(e: KeyEvent): Boolean {
-        if (game.isEmpty() || foreground != game) return false
+        if (game.isEmpty() || foreground != game || transientWindow) return false
         // Consume both halves of a rebinding key event; never leak just KEY_UP to the game.
         if (e.action == KeyEvent.ACTION_UP && e.keyCode == consumedBindingUp) {
             consumedBindingUp = -1
@@ -122,7 +158,7 @@ class HudAccessibilityService : AccessibilityService() {
         wm.defaultDisplay.getRealSize(it)
     }
     private fun tap(x: Float,y:Float) {
-        if (foreground != game || editing) return
+        if (foreground != game || editing || transientWindow) return
         val p=size()
         val path=Path().apply { moveTo(x.coerceIn(0f,1f)*p.x,y.coerceIn(0f,1f)*p.y) }
         dispatchGesture(GestureDescription.Builder().addStroke(
@@ -245,9 +281,9 @@ class HudAccessibilityService : AccessibilityService() {
         fun tool(s:String,fn:()->Unit){
             line.addView(btn(s,fn),LinearLayout.LayoutParams(-2,dp(42)).apply{rightMargin=dp(5)})
         }
-        tool("+ Tocar"){newControl("TOUCH")}
-        tool("+ Analógico"){newControl("JOYSTICK")}
-        tool("+ Suspender + Sensi"){newControl("SUSPEND")}
+        tool("⊙ Tocar"){newControl("TOUCH")}
+        tool("◎ Analógico"){newControl("JOYSTICK")}
+        tool("⌖ Suspender + Sensi"){newControl("SUSPEND")}
         tool("Salvar"){save();closePanel();toast("Perfil do jogo salvo")}
         tool("Fechar"){closePanel()}
         bar.addView(line)
@@ -263,46 +299,40 @@ class HudAccessibilityService : AccessibilityService() {
         profile.controls.add(c);save();openEditor();openControlSettings(c)
     }
     private fun makeMarker(root:FrameLayout,c:HudControl){
-        val sz=size();val w=dp(95);val h=dp(45)
-        val label=when(c.kind){
-            "JOYSTICK"->"◎ WASD"
-            "SUSPEND"->"⌖ Sensi"
-            else->"⊙ "+KeyEvent.keyCodeToString(c.keyCode).removePrefix("KEYCODE_")
-        }
-        val v=txt(label,12f).apply{
-            gravity=Gravity.CENTER
-            background=bg(0xDB612A98.toInt(),0xFFDAC1FF.toInt())
-        }
-        val params=FrameLayout.LayoutParams(w,h).apply{
-            leftMargin=(c.x*sz.x-w/2).toInt().coerceIn(0,max(0,sz.x-w))
-            topMargin=(c.y*sz.y-h/2).toInt().coerceIn(dp(52),max(dp(52),sz.y-h-dp(43)))
+        val sz=size()
+        val side=dp(if(c.kind=="JOYSTICK") 108 else 74)
+        val v=HudMarkerView(this,c)
+        val params=FrameLayout.LayoutParams(side,side).apply {
+            leftMargin=(c.x*sz.x-side/2).toInt().coerceIn(0,max(0,sz.x-side))
+            topMargin=(c.y*sz.y-side/2).toInt().coerceIn(dp(54),max(dp(54),sz.y-side-dp(43)))
         }
         root.addView(v,params)
         var dx=0f;var dy=0f;var px=0;var py=0;var moved=false;var start=0L
-        v.setOnTouchListener{_,e->
+        v.setOnTouchListener { _,e ->
             when(e.actionMasked){
-                MotionEvent.ACTION_DOWN->{
+                MotionEvent.ACTION_DOWN -> {
                     dx=e.rawX;dy=e.rawY;px=params.leftMargin;py=params.topMargin
                     moved=false;start=android.os.SystemClock.uptimeMillis();true
                 }
-                MotionEvent.ACTION_MOVE->{
+                MotionEvent.ACTION_MOVE -> {
                     if(hypot(e.rawX-dx,e.rawY-dy)>dp(7))moved=true
-                    if(moved){
-                        params.leftMargin=(px+(e.rawX-dx).toInt()).coerceIn(0,max(0,sz.x-w))
-                        params.topMargin=(py+(e.rawY-dy).toInt()).coerceIn(dp(52),max(dp(52),sz.y-h-dp(43)))
+                    if(moved) {
+                        params.leftMargin=(px+(e.rawX-dx).toInt()).coerceIn(0,max(0,sz.x-side))
+                        params.topMargin=(py+(e.rawY-dy).toInt()).coerceIn(dp(54),max(dp(54),sz.y-side-dp(43)))
                         v.layoutParams=params
                     };true
                 }
-                MotionEvent.ACTION_UP->{
-                    if(moved){
-                        c.x=(params.leftMargin+w/2f)/sz.x
-                        c.y=(params.topMargin+h/2f)/sz.y;save()
-                    } else if(android.os.SystemClock.uptimeMillis()-start>650){
+                MotionEvent.ACTION_UP -> {
+                    if(moved) {
+                        c.x=(params.leftMargin+side/2f)/sz.x
+                        c.y=(params.topMargin+side/2f)/sz.y
+                        save()
+                    } else if(android.os.SystemClock.uptimeMillis()-start>650) {
                         profile.controls.remove(c);save();openEditor()
-                    }else openControlSettings(c)
+                    } else openControlSettings(c)
                     true
                 }
-                else->false
+                else -> false
             }
         }
     }
@@ -352,36 +382,49 @@ class HudAccessibilityService : AccessibilityService() {
     private fun openSettings(){
         val root=fullScreen(false)
         val scroll=ScrollView(this)
-        val box=col().apply{background=bg(0xFA1D1429.toInt(),0xFFB57AFF.toInt())
-            setPadding(dp(16),dp(14),dp(16),dp(14))}
+        val box=col().apply {
+            background=bg(0xFA1D1429.toInt(),0xFFB57AFF.toInt())
+            setPadding(dp(16),dp(14),dp(16),dp(14))
+        }
         box.addView(txt("Configurações · Referência",19f))
-        seek(box,"Sensibilidade X",profile.sensitivityX,1,1000){profile.sensitivityX=it}
-        seek(box,"Sensibilidade Y",profile.sensitivityY,1,1000){profile.sensitivityY=it}
-        seek(box,"Tamanho do cursor",profile.cursorSize,8,80){profile.cursorSize=it}
-        seek(box,"Transparência (%)",profile.cursorAlpha,10,100){profile.cursorAlpha=it}
-        seek(box,"Velocidade do cursor",profile.cursorSpeed,20,300){profile.cursorSpeed=it}
-        box.addView(txt("Cor da setinha",13f))
-        val colors=row()
-        listOf(Color.WHITE,0xFFAC72FF.toInt(),0xFF42B9FF.toInt(),0xFFEF477F.toInt(),0xFF35D8A7.toInt()).forEach{color->
-            colors.addView(txt("●",29f).apply{setTextColor(color);gravity=Gravity.CENTER
-                setOnClickListener{profile.cursorColor=color;save()}},LinearLayout.LayoutParams(0,dp(42),1f))
+        box.addView(txt("Mira e movimento",15f),LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(12)})
+        seek(box,"Sensibilidade horizontal (X)",profile.sensitivityX,1,1000){
+            profile.sensitivityX=it
         }
-        box.addView(colors)
-        box.addView(txt("Estilo",13f))
-        val styles=row()
-        listOf("Seta","Ponto","Cruz","Círculo").forEachIndexed{i,label->
-            styles.addView(btn(label){profile.cursorStyle=i;save()},
-                LinearLayout.LayoutParams(0,dp(40),1f).apply{rightMargin=dp(3)})
+        seek(box,"Sensibilidade vertical (Y)",profile.sensitivityY,1,1000){
+            profile.sensitivityY=it
         }
-        box.addView(styles)
-        box.addView(txt("Personalização armazenada apenas por jogo. O ponteiro nativo ainda não é substituído.",11f),
-            LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8)})
-        box.addView(btn("Atalho: "+KeyEvent.keyCodeToString(profile.shortcutKey).removePrefix("KEYCODE_")){
+        box.addView(txt("Cursor personalizado (.cur)",15f),LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(16)})
+        val filename=cursors.filename(game)
+        box.addView(txt(if(filename.isNullOrBlank()) "Nenhum arquivo selecionado. Use Cursor do mouse na tela inicial."
+            else "Arquivo selecionado: "+filename,11f))
+        val decoded=cursors.load(game)
+        if(decoded!=null) {
+            val preview=ImageView(this).apply {
+                setImageBitmap(decoded.bitmap)
+                scaleType=ImageView.ScaleType.FIT_CENTER
+                setBackgroundColor(0x442E1A42)
+            }
+            val initial=dp(profile.cursorSize.coerceIn(12,128))
+            box.addView(preview,LinearLayout.LayoutParams(initial,initial).apply {topMargin=dp(7)})
+            seek(box,"Tamanho da seta",cursors.size(game),12,128) {
+                cursors.setSize(game,it)
+                val n=dp(it)
+                preview.layoutParams=LinearLayout.LayoutParams(n,n).apply {topMargin=dp(7)}
+            }
+        } else {
+            seek(box,"Tamanho da seta",cursors.size(game),12,128){
+                cursors.setSize(game,it)
+            }
+        }
+        box.addView(txt("A prévia do .cur e o tamanho são salvos por jogo. A substituição do ponteiro nativo durante a partida depende do futuro motor de captura de mouse.",11f),
+            LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(9)})
+        box.addView(btn("Atalho de digitação: "+KeyEvent.keyCodeToString(profile.shortcutKey).removePrefix("KEYCODE_")){
             bindKey={key->profile.shortcutKey=key;save();openSettings()}
-            toast("Pressione tecla para alternar digitação")
-        },LinearLayout.LayoutParams(-1,dp(43)).apply{topMargin=dp(9)})
+            toast("Pressione uma tecla física")
+        },LinearLayout.LayoutParams(-1,dp(43)).apply {topMargin=dp(9)})
         box.addView(btn("Salvar e fechar"){save();closePanel()},
-            LinearLayout.LayoutParams(-1,dp(45)).apply{topMargin=dp(9)})
+            LinearLayout.LayoutParams(-1,dp(45)).apply {topMargin=dp(9)})
         scroll.addView(box)
         val sz=size()
         root.addView(scroll,FrameLayout.LayoutParams(min(sz.x-dp(18),dp(490)),

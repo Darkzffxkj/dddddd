@@ -10,6 +10,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.hardware.input.InputManager
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -62,6 +63,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private var disposed = false
     private var permissionsDialog: Dialog? = null
     private var permissionsRefresh: (() -> Unit)? = null
+    private val cursorStore by lazy { CursorFileStore(this) }
 
     private val onShizukuArrived = Shizuku.OnBinderReceivedListener { runOnUiThread { updateActivation() } }
     private val onShizukuDead = Shizuku.OnBinderDeadListener { runOnUiThread { updateActivation() } }
@@ -261,8 +263,8 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         settingsRow(content, "Mapeamentos", "Perfis e configurações de teclas") {
             info("Editor HUD", "Abra um jogo pela aba Jogar, toque no botão flutuante e escolha Editar HUD. Toques por teclado externo podem funcionar com Acessibilidade habilitada.")
         }
-        settingsRow(content, "Cursor do mouse", "Personalização do cursor") {
-            info("Cursor do mouse", "Abra o menu flutuante dentro do jogo e toque em Configurações. O perfil visual é salvo por jogo; o cursor físico ainda não é substituído.")
+        settingsRow(content, "Cursor do mouse", "Importar setinha .cur dos arquivos do Android") {
+            openCursorPicker()
         }
         settingsRow(content, "Terminal ADB", "Informações de ativação") { showTab(1) }
         settingsRow(content, "Apps em execução", "Gerenciamento de aplicativos") {
@@ -653,6 +655,51 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         toast("Comando ADB copiado")
     }
 
+    /** Open Android's SAF document browser. Do not request broad filesystem privileges. */
+    private fun openCursorPicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try { startActivityForResult(intent, PICK_CURSOR_FILE) }
+        catch (_: Exception) { toast("Não foi possível abrir os arquivos do Android") }
+    }
+
+    @Deprecated("Using Activity result for API 29 compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        if (requestCode != PICK_CURSOR_FILE || resultCode != Activity.RESULT_OK) return
+        val uri=data?.data ?: return
+        val display=try {
+            contentResolver.query(uri,arrayOf(OpenableColumns.DISPLAY_NAME),null,null,null)?.use {
+                if(it.moveToFirst()) it.getString(0) else null
+            }
+        } catch (_: Exception) { null } ?: "cursor.cur"
+        if(!display.lowercase().endsWith(".cur")){
+            toast("Escolha um arquivo .cur do Windows")
+            return
+        }
+        val available=if(allApps.isEmpty())games.allLaunchable()else allApps
+        val targets=available.filter { it.isGame }.ifEmpty { available }
+        if(targets.isEmpty()){
+            toast("Adicione um jogo na aba Jogar antes de importar a seta")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Aplicar cursor a qual jogo?")
+            .setItems(targets.map { it.label }.toTypedArray()) { _,index ->
+                val selected=targets[index]
+                if(cursorStore.import(selected.packageName,uri,display))
+                    info("Cursor importado",display+" salvo para "+selected.label+
+                        ". Em Configurações durante o jogo, ajuste o tamanho da seta.")
+                else
+                    info("Formato não suportado",
+                        "O arquivo precisa ser um .cur válido, com imagem PNG ou BMP 32-bit.")
+            }
+            .setNegativeButton("Cancelar",null).show()
+    }
+
     private fun showAppMenu() {
         AlertDialog.Builder(this).setTitle("Referência")
 .setItems(arrayOf("Jogar", "Ativação", "Otimizar", "Atualizar jogos", "Sobre")) { _, option ->
@@ -671,5 +718,6 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     }
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
-    companion object { private const val SHIZUKU_PERMISSION_CODE = 1001 }
+    companion object { private const val SHIZUKU_PERMISSION_CODE = 1001
+        private const val PICK_CURSOR_FILE = 7042 }
 }
