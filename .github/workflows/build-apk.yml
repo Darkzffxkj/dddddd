@@ -4,7 +4,7 @@ on:
   push:
     branches: [keymapper-v2-build, keymapper-v4-optimizer, keymapper-v5-hibernator, referencia-v6-ui, referencia-v7-hud, referencia-v8-overlay-cursor, referencia-v9-game-controls, referencia-v10-overlay-settings, referencia-v11-overlay-session]
 permissions:
-  contents: read
+  contents: write
 jobs:
   debug-apk:
     name: APK debug (Android 10+)
@@ -46,3 +46,23 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publicar link direto do APK na aba Releases
+        if: github.ref == 'refs/heads/referencia-v11-overlay-session'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -e
+          TAG="referencia-v11"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK#Referencia-V11.apk" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$APK#Referencia-V11.apk" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Referência V11 — correção do botão flutuante" \
+              --notes "Android 10+. APK de teste; botão flutuante com correção de ciclo de vida e opção Diagnóstico HUD." \
+              --prerelease
+          fi
