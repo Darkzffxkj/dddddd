@@ -55,6 +55,10 @@ class HudMarkerView(context:Context,private val control:HudControl):View(context
             if(control.kind=="SUSPEND") {
                 text(canvas,"⌖",cx,cy-k*.06f,k*.37f,Color.WHITE)
                 text(canvas,"SENSI",cx,cy+k*.24f,k*.13f,0xFFE3D4FF.toInt())
+            } else if(control.kind=="FIRE") {
+                circle(canvas,cx,cy,k*.28f,0xFF8E315F.toInt())
+                text(canvas,"●",cx,cy-k*.08f,k*.33f,Color.WHITE)
+                text(canvas,"ATIRAR",cx,cy+k*.23f,k*.125f,0xFFFFD8E9.toInt())
             } else {
                 val label=KeyEvent.keyCodeToString(control.keyCode).removePrefix("KEYCODE_")
                 val shown=if(label.length>5)label.take(4)+"…" else label

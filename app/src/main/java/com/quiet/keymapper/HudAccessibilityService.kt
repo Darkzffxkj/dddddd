@@ -216,12 +216,16 @@ class HudAccessibilityService : AccessibilityService() {
     }
     private fun showBubble(){
         if(bubble!=null || panel!=null || game.isEmpty() || foreground!=game)return
-        val v=btn("✦") { }.apply {
-            textSize=22f
-            background=GradientDrawable().apply{
-                shape=GradientDrawable.OVAL;setColor(0xEB742AB8.toInt())
+        val v=ImageView(this).apply {
+            setImageResource(R.drawable.brand_logo)
+            scaleType=ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(5),dp(5),dp(5),dp(5))
+            background=GradientDrawable().apply {
+                shape=GradientDrawable.OVAL
+                setColor(0xEE160B26.toInt())
                 setStroke(dp(2),0xFFD7A9FF.toInt())
             }
+            contentDescription="Referência — abrir menu"
         }
         val params=lp(dp(52),dp(52))
         cornerPosition(params,store.corner())

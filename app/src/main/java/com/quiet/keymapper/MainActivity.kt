@@ -134,9 +134,15 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
             setPadding(dp(17), dp(16), dp(17), dp(14))
         }
         val top = row()
+        val brand=ImageView(this).apply {
+            setImageResource(R.drawable.brand_logo)
+            scaleType=ImageView.ScaleType.FIT_CENTER
+            contentDescription="Referência"
+        }
+        top.addView(brand,LinearLayout.LayoutParams(dp(48),dp(48)).apply { rightMargin=dp(10) })
         val title = column().apply {
-            addView(txt("✦  Referência", 20f, Palette.white, true))
-            addView(txt("MAPEADOR ANDROID 10+", 10f, 0xFFE3C9FF.toInt(), true),
+            addView(txt("Referência", 21f, Palette.white, true))
+            addView(txt("GAME MAPPER · ANDROID 10+", 10f, 0xFFE3C9FF.toInt(), true),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         }
         top.addView(title, LinearLayout.LayoutParams(0, -2, 1f))

@@ -15,11 +15,14 @@ data class HudControl(
     var x: Float,
     var y: Float,
     var radius: Float = 0.09f,
-    var slowRatio: Float = 0.35f
+    var slowRatio: Float = 0.35f,
+    var delayMs: Int = 0,
+    var repeatMs: Int = 120
 ) {
     fun toJson() = JSONObject().put("kind", kind).put("key", keyCode)
         .put("x", x.toDouble()).put("y", y.toDouble())
         .put("radius", radius.toDouble()).put("slow", slowRatio.toDouble())
+        .put("delay", delayMs).put("repeat", repeatMs)
     companion object {
         fun read(o: JSONObject) = HudControl(
             o.optString("kind", "TOUCH"),
@@ -27,7 +30,9 @@ data class HudControl(
             o.optDouble("x", 0.5).toFloat().coerceIn(0f, 1f),
             o.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f),
             o.optDouble("radius", 0.09).toFloat().coerceIn(.01f, .3f),
-            o.optDouble("slow", .35).toFloat().coerceIn(.05f, 1f)
+            o.optDouble("slow", .35).toFloat().coerceIn(.05f, 1f),
+            o.optInt("delay", 0).coerceIn(0, 300),
+            o.optInt("repeat", 120).coerceIn(50, 500)
         )
     }
 }
@@ -44,7 +49,10 @@ data class HudProfile(
     var resetViewKey: Int = android.view.KeyEvent.KEYCODE_UNKNOWN,
     var slowKey: Int = android.view.KeyEvent.KEYCODE_SHIFT_LEFT,
     var suspendEnabled: Boolean = false,
-    var reducedLatency: Boolean = true
+    var reducedLatency: Boolean = true,
+    var aimAcceleration: Int = 0,
+    var aimSmoothing: Int = 0,
+    var msiStyle: Boolean = false
 ) {
     fun toJson(): String = JSONObject().apply {
         put("controls", JSONArray().apply { controls.forEach { put(it.toJson()) } })
@@ -54,6 +62,8 @@ data class HudProfile(
         put("cursorSpeed", cursorSpeed); put("shortcutKey", shortcutKey)
         put("resetViewKey", resetViewKey); put("slowKey", slowKey)
         put("suspendEnabled", suspendEnabled); put("reducedLatency", reducedLatency)
+        put("aimAcceleration", aimAcceleration); put("aimSmoothing", aimSmoothing)
+        put("msiStyle", msiStyle)
     }.toString()
     companion object {
         fun read(raw: String): HudProfile {
@@ -74,6 +84,9 @@ data class HudProfile(
                 result.slowKey = o.optInt("slowKey", android.view.KeyEvent.KEYCODE_SHIFT_LEFT)
                 result.suspendEnabled = o.optBoolean("suspendEnabled", false)
                 result.reducedLatency = o.optBoolean("reducedLatency", true)
+                result.aimAcceleration = o.optInt("aimAcceleration", 0).coerceIn(0, 100)
+                result.aimSmoothing = o.optInt("aimSmoothing", 0).coerceIn(0, 100)
+                result.msiStyle = o.optBoolean("msiStyle", false)
                 result
             } catch (_: Exception) { HudProfile() }
         }
