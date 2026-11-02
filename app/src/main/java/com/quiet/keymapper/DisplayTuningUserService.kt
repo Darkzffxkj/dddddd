@@ -4,9 +4,6 @@ import android.os.Process
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
-import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
 
 /** Shell-side, parameter-validated display controls. 45s undo timer while bound.
  * An unexpected process death may prevent rollback; the interface documents
@@ -77,13 +74,12 @@ class DisplayTuningUserService : IDisplayTuningService.Stub() {
         if(!authorized()) return@synchronized -10
         if(rollback!=null) return@synchronized -7
         val d=try { probe() } catch (_:Exception) { null } ?: return@synchronized -1
-        val minW=max(320,(d.physicalW*.60).toInt())
-        val minH=max(480,(d.physicalH*.60).toInt())
-        val minDpi=max(160,(d.physicalDpi*.75).toInt())
-        val maxDpi=min(640,(d.physicalDpi*1.25).toInt())
-        if(width !in minW..d.physicalW || height !in minH..d.physicalH ||
-            abs(width.toDouble()/height.coerceAtLeast(1)-d.physicalW.toDouble()/d.physicalH)>.045 ||
-            dpi !in minDpi..maxDpi) return@synchronized -2
+        // Manual values, independent of the panel's native aspect ratio,
+        // orientation or density. The example 1656 x 1080 @ 500 DPI is valid.
+        // Only broad display-safety limits apply (not percentage presets).
+        if(width !in 320..4096 || height !in 320..4096 ||
+            width.toLong()*height.toLong()>9_000_000L || dpi !in 120..1000)
+            return@synchronized -2
         val previous=Original(d.sizeOverride,d.densityOverride)
         try {
             val a=cmd("/system/bin/wm","size",width.toString()+"x"+height)

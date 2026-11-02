@@ -484,11 +484,19 @@ class HudAccessibilityService : AccessibilityService() {
         p.y=if(c<2)dp(121)else max(dp(12),sz.y-dp(313))
         if(add(container,p))menu=container
     }
-    private fun fullScreen(edit:Boolean):FrameLayout{
+    private fun fullScreen(edit:Boolean,allowKeyboard:Boolean=false):FrameLayout{
         closeMenu();remove(bubble);bubble=null;remove(panel);panel=null
         editing=edit
-        val root=FrameLayout(this).apply{setBackgroundColor(0x90090514.toInt())}
-        if(add(root,lp(-1,-1)))panel=root
+        val root=FrameLayout(this).apply { setBackgroundColor(0x90090514.toInt()) }
+        val overlayParams=lp(-1,-1)
+        if(allowKeyboard) {
+            // Android Accessibility overlays default to NOT_FOCUSABLE in this app.
+            // A focusable window is required for typed resolution/DPI values.
+            overlayParams.flags=overlayParams.flags and
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            overlayParams.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+        if(add(root,overlayParams))panel=root
         return root
     }
     private fun openEditor(){
@@ -675,141 +683,197 @@ class HudAccessibilityService : AccessibilityService() {
         box.addView(r)
     }
     private fun createDisplaySettings(box:LinearLayout) {
-        box.addView(txt("Resolução e densidade • estilo SecondScreen",15f),
+        box.addView(txt("Resolução personalizada e Density (DPI)",15f),
             LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(17)})
-        val notice=txt("Altera a resolução e a escala da TELA INTEIRA do Android, não apenas do jogo. " +
-            "Pode deslocar controles e reduzir a legibilidade. Shizuku autorizado é obrigatório.",11f)
+        val notice=txt(
+            "Digite a largura, a altura e o DPI que preferir. Exemplo: 1656 × 1080 / 500 DPI. " +
+            "Você não precisa manter a proporção original da tela. A mudança afeta todo o Android.",
+            11f
+        )
         notice.setTextColor(0xFFFFD0A2.toInt())
         box.addView(notice,LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(7)})
-        val status=txt("Conectando ao Shizuku...",12f)
+        val status=txt("Verificando resolução atual pelo Shizuku...",12f)
         box.addView(status,LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(10)})
         val choices=col()
         box.addView(choices)
         val client=displayTuning()
 
-        fun render(d:DisplayState) {
-            if(!box.isAttachedToWindow) return
+        fun render(display:DisplayState) {
+            if(!box.isAttachedToWindow)return
             choices.removeAllViews()
-            status.text="Atual: "+d.activeW+" × "+d.activeH+" px • "+d.activeDpi+
-                " DPI\nFísico: "+d.physicalW+" × "+d.physicalH+" px • "+d.physicalDpi+" DPI"+
-                if(d.pending)"\nTeste ativo: confirme antes de 45 segundos." else ""
-            val minimum=max(60,
-                max((32000+d.physicalW-1)/d.physicalW,
-                    (48000+d.physicalH-1)/d.physicalH)).coerceAtMost(100)
-            var resolutionPercent=(d.activeW*100/d.physicalW).coerceIn(minimum,100)
-            val minDpi=max(160,(d.physicalDpi*.75).toInt())
-            val maxDpi=min(640,(d.physicalDpi*1.25).toInt()).coerceAtLeast(minDpi)
-            var selectedDpi=d.activeDpi.coerceIn(minDpi,maxDpi)
-            val preview=txt("",12f)
-            preview.setTextColor(0xFFE7CBFF.toInt())
-            fun candidate():Pair<Int,Int> {
-                val scale=resolutionPercent/100.0
-                val w=(d.physicalW*scale).toInt()
-                val h=(d.physicalH*scale).toInt()
-                return w to h
+            status.text="Resolução atual: "+display.activeW+" × "+display.activeH+
+                " / "+display.activeDpi+" DPI"+
+                "\nTela física: "+display.physicalW+" × "+display.physicalH+
+                " / "+display.physicalDpi+" DPI"+
+                if(display.pending)"\nTESTE ATIVO: confirme antes de 45 segundos." else ""
+
+            fun entry(label:String,initial:Int):android.widget.EditText {
+                val section=col()
+                val title=txt(label,13f)
+                title.setTextColor(0xFFE8D1FF.toInt())
+                section.addView(title)
+                val input=android.widget.EditText(this).apply {
+                    setText(initial.toString())
+                    inputType=android.text.InputType.TYPE_CLASS_NUMBER
+                    isSingleLine=true
+                    textSize=18f
+                    setTextColor(android.graphics.Color.WHITE)
+                    setSelectAllOnFocus(true)
+                    background=bg(0xFF271634.toInt(),0xFF9F65E4.toInt())
+                    setPadding(dp(10),dp(7),dp(10),dp(7))
+                }
+                section.addView(input,LinearLayout.LayoutParams(-1,dp(48)).apply {
+                    topMargin=dp(5)
+                })
+                choices.addView(section,LinearLayout.LayoutParams(-1,-2).apply {
+                    topMargin=dp(10)
+                })
+                return input
+            }
+            val width=entry("Largura (px)",display.activeW)
+            val height=entry("Altura (px)",display.activeH)
+            val density=entry("Density / DPI",display.activeDpi)
+
+            val feedback=txt("",12f)
+            choices.addView(feedback,LinearLayout.LayoutParams(-1,-2).apply {
+                topMargin=dp(10)
+            })
+
+            fun numbers():Triple<Int,Int,Int>? {
+                val w=width.text.toString().trim().toIntOrNull() ?: return null
+                val h=height.text.toString().trim().toIntOrNull() ?: return null
+                val dpi=density.text.toString().trim().toIntOrNull() ?: return null
+                return Triple(w,h,dpi)
+            }
+            fun valid(n:Triple<Int,Int,Int>):Boolean {
+                val (w,h,dpi)=n
+                return w in 320..4096 && h in 320..4096 &&
+                    w.toLong()*h.toLong()<=9_000_000L && dpi in 120..1000
             }
             fun updatePreview() {
-                val target=candidate()
-                preview.text="Prévia: "+target.first+" × "+target.second+
-                    " px / "+selectedDpi+" DPI"
-            }
-            seek(choices,"Escala da resolução (%)",resolutionPercent,minimum,100) {
-                resolutionPercent=it
-                updatePreview()
-            }
-            seek(choices,"Densidade (DPI)",selectedDpi,minDpi,maxDpi) {
-                selectedDpi=it
-                updatePreview()
-            }
-            choices.addView(preview)
-            updatePreview()
-            choices.addView(txt(
-                "Resolução proporcional para preservar o formato da tela. " +
-                "Valores limitados a 60–100% da resolução física e 75–125% do DPI original.",
-                11f
-            ),LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(6)})
-
-            if(d.pending) {
-                choices.addView(btn("Confirmar e manter resolução"){
-                    status.text="Confirmando..."
-                    client.confirm { code ->
-                        if(code==0) {
-                            toast("Configuração confirmada")
-                            client.query { fresh,error ->
-                                if(fresh!=null) render(fresh)
-                                else status.text="Não foi possível ler o estado: "+error
-                            }
-                        } else status.text="Falha ao confirmar: "+code+
-                            ". Aguarde o retorno automático."
+                val n=numbers()
+                when {
+                    n==null -> {
+                        feedback.text="Preencha os três campos com números inteiros."
+                        feedback.setTextColor(0xFFFFB68D.toInt())
                     }
-                },LinearLayout.LayoutParams(-1,dp(47)).apply {topMargin=dp(11)})
-            } else {
-                choices.addView(btn("Testar resolução e DPI por 45 segundos"){
-                    val target=candidate()
-                    status.text="Aplicando configuração temporária..."
-                    client.apply(target.first,target.second,selectedDpi) { code ->
-                        if(code==0) {
-                            toast("Teste aplicado. Confirme antes do retorno automático.")
-                            client.query { fresh,error ->
-                                if(fresh!=null) render(fresh)
-                                else status.text="Aplicado, consulta indisponível: "+error
-                            }
-                        } else {
-                            status.text="Não foi possível aplicar (código "+code+
-                                "). Confira o Shizuku e os limites de segurança."
-                        }
+                    !valid(n) -> {
+                        feedback.text="Limites: largura/altura de 320 a 4096 px, "+
+                            "até 9 milhões de pixels, DPI de 120 a 1000."
+                        feedback.setTextColor(0xFFFFB68D.toInt())
                     }
-                },LinearLayout.LayoutParams(-1,dp(47)).apply {topMargin=dp(11)})
-            }
-            var resetArmed=false
-            val reset=btn("Restaurar resolução e DPI originais"){
-                if(!resetArmed) {
-                    resetArmed=true
-                    status.text="Confirme tocando em Restaurar novamente. "+
-                        "Isso remove todas as substituições de resolução e DPI."
-                } else {
-                    status.text="Restaurando padrão..."
-                    client.reset { code ->
-                        if(code==0) {
-                            resetArmed=false
-                            toast("Tela restaurada")
-                            client.query { fresh,error ->
-                                if(fresh!=null) render(fresh)
-                                else status.text="Restauração enviada; consulta: "+error
-                            }
-                        } else status.text="Falha na restauração: "+code
+                    else -> {
+                        feedback.text="Sua escolha: "+n.first+" × "+n.second+
+                            " px, "+n.third+" DPI"
+                        feedback.setTextColor(0xFFC6A9FA.toInt())
                     }
                 }
             }
-            choices.addView(reset,LinearLayout.LayoutParams(-1,dp(47)).apply {topMargin=dp(7)})
-            choices.addView(btn("Copiar comandos de recuperação"){
-                val clip=getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clip.setPrimaryClip(android.content.ClipData.newPlainText(
-                    "Restauração de tela","wm size reset\nwm density reset"
-                ))
-                toast("Comandos de recuperação copiados")
-            },LinearLayout.LayoutParams(-1,dp(44)).apply {topMargin=dp(7)})
-            choices.addView(txt("Proteção: sem confirmação, o serviço tenta restaurar os valores " +
-                "anteriores após 45 segundos. Se o processo privilegiado for encerrado, essa " +
-                "recuperação não é garantida. Use ADB para restaurar caso necessário.",11f),
-                LinearLayout.LayoutParams(-1,-2).apply {topMargin=dp(8)})
-        }
+            val watcher=object:android.text.TextWatcher {
+                override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+                override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) {
+                    updatePreview()
+                }
+                override fun afterTextChanged(s:android.text.Editable?) {}
+            }
+            listOf(width,height,density).forEach {it.addTextChangedListener(watcher)}
+            updatePreview()
 
+            choices.addView(txt("Os valores são livres dentro dos limites de segurança; "+
+                "uma resolução diferente da proporção física pode deformar a imagem. "+
+                "A tela poderá girar, reiniciar sua interface ou mudar a posição do HUD.",
+                11f),LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8)})
+
+            if(display.pending) {
+                choices.addView(btn("Confirmar e manter a configuração") {
+                    status.text="Confirmando a configuração..."
+                    client.confirm { code ->
+                        if(code==0) {
+                            toast("Resolução e DPI confirmados")
+                            client.query { fresh,error ->
+                                if(fresh!=null)render(fresh)
+                                else status.text="Confirmado, mas não foi possível consultar: "+error
+                            }
+                        } else status.text="Não foi possível confirmar ("+code+
+                            "). Aguarde a restauração."
+                    }
+                },LinearLayout.LayoutParams(-1,dp(48)).apply {topMargin=dp(12)})
+            } else {
+                choices.addView(btn("Testar minha resolução e DPI (45 s)") {
+                    val n=numbers()
+                    if(n==null || !valid(n)) {
+                        status.text="Preencha valores válidos antes de aplicar."
+                    } else {
+                        // Close soft keyboard before wm reconfigures the screen.
+                        val keyboard=getSystemService(Context.INPUT_METHOD_SERVICE)
+                            as android.view.inputmethod.InputMethodManager
+                        keyboard.hideSoftInputFromWindow(width.windowToken,0)
+                        status.text="Aplicando "+n.first+" × "+n.second+
+                            " e "+n.third+" DPI..."
+                        client.apply(n.first,n.second,n.third) { code ->
+                            if(code==0) {
+                                toast("Teste ativo! Confirme antes de 45 segundos.")
+                                client.query { fresh,error ->
+                                    if(fresh!=null)render(fresh)
+                                    else status.text="Teste aplicado; consulta indisponível: "+error
+                                }
+                            } else {
+                                status.text="Falha ao aplicar ("+code+
+                                    "). Verifique os valores e a ativação Shizuku."
+                            }
+                        }
+                    }
+                },LinearLayout.LayoutParams(-1,dp(48)).apply{topMargin=dp(12)})
+            }
+
+            var resetArmed=false
+            choices.addView(btn("Restaurar resolução e DPI originais") {
+                if(!resetArmed) {
+                    resetArmed=true
+                    status.text="Toque novamente em RESTAURAR para remover "+
+                        "as configurações personalizadas do display."
+                } else {
+                    status.text="Restaurando valores padrão..."
+                    client.reset { code ->
+                        if(code==0) {
+                            toast("Tela restaurada")
+                            client.query { fresh,error ->
+                                if(fresh!=null)render(fresh)
+                                else status.text="Comando enviado. Consulta: "+error
+                            }
+                        } else status.text="Restauração falhou: "+code
+                    }
+                }
+            },LinearLayout.LayoutParams(-1,dp(48)).apply{topMargin=dp(8)})
+
+            choices.addView(btn("Copiar comandos de recuperação") {
+                val clip=getSystemService(Context.CLIPBOARD_SERVICE)
+                    as android.content.ClipboardManager
+                clip.setPrimaryClip(android.content.ClipData.newPlainText(
+                    "Recuperar resolução Android","wm size reset\nwm density reset"
+                ))
+                toast("Comandos copiados")
+            },LinearLayout.LayoutParams(-1,dp(44)).apply{topMargin=dp(8)})
+            choices.addView(txt("Sem confirmar, o serviço tenta desfazer as "+
+                "alterações após 45 segundos. Se o processo Shizuku for encerrado, "+
+                "a recuperação automática não é garantida. Nesse caso, execute "+
+                "wm size reset e wm density reset por ADB.",
+                11f),LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8)})
+        }
         client.connect { ok ->
-            if(!box.isAttachedToWindow) return@connect
-            if(!ok) {
-                status.text="Shizuku indisponível ou sem permissão. "+
-                    "Abra Referência > Ativação e autorize."
-            } else client.query { d,error ->
-                if(!box.isAttachedToWindow) return@query
-                if(d!=null) render(d)
-                else status.text="Erro ao ler resolução: "+error
+            if(!box.isAttachedToWindow)return@connect
+            if(!ok)status.text="Shizuku inativo ou sem autorização. "+
+                "Ative pela aba Ativação da Referência."
+            else client.query { d,error ->
+                if(!box.isAttachedToWindow)return@query
+                if(d!=null)render(d)
+                else status.text="Não foi possível consultar a tela: "+error
             }
         }
     }
 
     private fun openSettingsPage(which:Int) {
-        val root=fullScreen(false)
+        val root=fullScreen(false,allowKeyboard=(which==4))
         val titles=arrayOf(
             "Configurações Básicas",
             "Monitor de Informações do Dispositivo",
