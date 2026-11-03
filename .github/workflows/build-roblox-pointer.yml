@@ -32,6 +32,9 @@ jobs:
           mkdir -p roblox-ci/workspace
           tar -xJf /tmp/roblox-pointer-source.tar.xz -C roblox-ci/workspace
           test -f roblox-ci/workspace/app/src/main/AndroidManifest.xml
+      - name: Fix Android Java listener variable collision
+        run: |
+          sed -i 's/tapClicks.setOnCheckedChangeListener((b, checked) ->/tapClicks.setOnCheckedChangeListener((buttonView, checked) ->/' roblox-ci/workspace/app/src/main/java/dev/ollfx/rpointer/MainActivity.java
       - name: Compile Android debug APK
         working-directory: roblox-ci/workspace
         run: gradle --no-daemon --stacktrace assembleDebug
