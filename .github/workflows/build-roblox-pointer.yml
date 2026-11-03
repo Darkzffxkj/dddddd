@@ -32,9 +32,14 @@ jobs:
           mkdir -p roblox-ci/workspace
           tar -xJf /tmp/roblox-pointer-source.tar.xz -C roblox-ci/workspace
           test -f roblox-ci/workspace/app/src/main/AndroidManifest.xml
-      - name: Fix Android Java listener variable collision
+      - name: Apply Shizuku binder and authorization fix (v0.2)
+        shell: bash
         run: |
-          sed -i 's/tapClicks.setOnCheckedChangeListener((b, checked) ->/tapClicks.setOnCheckedChangeListener((buttonView, checked) ->/' roblox-ci/workspace/app/src/main/java/dev/ollfx/rpointer/MainActivity.java
+          set -euo pipefail
+          base64 --decode roblox-ci/shizuku-fix.patch.gz.b64 | gzip -d > /tmp/shizuku-fix.patch
+          cd roblox-ci/workspace
+          patch --batch --fuzz=0 -p1 < /tmp/shizuku-fix.patch
+          grep -q 'versionCode 2' app/build.gradle
       - name: Compile Android debug APK
         working-directory: roblox-ci/workspace
         run: gradle --no-daemon --stacktrace assembleDebug
@@ -46,6 +51,6 @@ jobs:
           sha256sum roblox-ci/workspace/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: RobloxPointerMapper-alpha-apk
+          name: RobloxPointerMapper-alpha-v0.2-shizuku-fix-apk
           path: roblox-ci/workspace/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
