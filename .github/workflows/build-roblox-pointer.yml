@@ -1,0 +1,46 @@
+name: Build Roblox Pointer Mapper APK
+on:
+  push:
+    branches:
+      - build/roblox-pointer-mapper-20261102
+  workflow_dispatch:
+jobs:
+  android-apk:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Android SDK packages
+        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Restore and verify source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat roblox-ci/src.part1 roblox-ci/src.part2 roblox-ci/src.part3 roblox-ci/src.part4 | base64 --decode > /tmp/roblox-pointer-source.tar.xz
+          echo "c6b2ffe5473c7980ae977be24cf97d0c9a20886aa323f0efef923838c8312330  /tmp/roblox-pointer-source.tar.xz" | sha256sum -c -
+          mkdir -p roblox-ci/workspace
+          tar -xJf /tmp/roblox-pointer-source.tar.xz -C roblox-ci/workspace
+          test -f roblox-ci/workspace/app/src/main/AndroidManifest.xml
+      - name: Compile Android debug APK
+        working-directory: roblox-ci/workspace
+        run: gradle --no-daemon --stacktrace assembleDebug
+      - name: Validate output
+        shell: bash
+        run: |
+          test -s roblox-ci/workspace/app/build/outputs/apk/debug/app-debug.apk
+          unzip -t roblox-ci/workspace/app/build/outputs/apk/debug/app-debug.apk | tail -1
+          sha256sum roblox-ci/workspace/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RobloxPointerMapper-alpha-apk
+          path: roblox-ci/workspace/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
